@@ -4673,6 +4673,24 @@ class EMAScheduledItemSelectionTests(TestCase):
         item_ids = [item['item_id'] for item in response.json()['items']]
         self.assertIn('B3', item_ids)
 
+    def test_b3_follow_ups_depend_on_participant_watching_a_game(self):
+        EventDay.objects.create(date=eastern_today(), sport='football')
+        CheckinReminder.objects.create(user=self.user)
+
+        response = self.client.get('/ema/next/')
+
+        self.assertEqual(response.status_code, 200)
+        b3 = next(item for item in response.json()['items'] if item['item_id'] == 'B3')
+        sub_items = {sub_item['sub_item_id']: sub_item for sub_item in b3['sub_items']}
+        self.assertNotIn('depends_on', sub_items['B3_watching'])
+        expected_condition = {'sub_item_id': 'B3_watching', 'not_equals': 'No'}
+        for sub_item_id in (
+            'B3_importance', 'B3_game_status', 'B3_watch_mode',
+            'B3_bet', 'B3_sudden_shift',
+        ):
+            with self.subTest(sub_item_id=sub_item_id):
+                self.assertEqual(sub_items[sub_item_id]['depends_on'], expected_condition)
+
     def test_b8_only_on_first_check_in_of_day(self):
         representative_sub_item = {
             'B1': 'B1_valence', 'B2': 'B2_stress', 'B3': 'B3_importance', 'B4': 'B4_urge',
