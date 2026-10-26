@@ -43,6 +43,7 @@ export type EMANextShowResponse = ResourceCardState & {
   prompt_id: string;
   ema_type: EMAType;
   jitai_log_id: number | null;
+  message_prompt_id?: string;
   outcome_window_active: boolean;
   outcome_window_start?: string | null;
   outcome_window_end?: string | null;

@@ -53,6 +53,9 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
 DASHBOARD_API_KEY = os.getenv('DASHBOARD_API_KEY', '')
 API_KEY = os.getenv('API_KEY', '')
+# Off until every participant runs an app build that bundles the message bank:
+# an older build would show the notification and then no message.
+JITAI_VISIBLE_PUSH = os.getenv('JITAI_VISIBLE_PUSH', 'False').lower() == 'true'
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 if SENTRY_DSN:

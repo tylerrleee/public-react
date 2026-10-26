@@ -1,0 +1,36 @@
+name: Mobile rebuild needed
+description: A change that only reaches participants through a new app build (native dependency, bundled asset, app.json/config, JS that a backend flag depends on).
+title: "[rebuild] "
+labels: ["mobile-rebuild"]
+body:
+  - type: input
+    id: branch
+    attributes:
+      label: Branch / PR
+      description: Where the change lives, e.g. feat/show-jitai-message or #79
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What changed that needs a build
+      description: Files or assets, and why an OTA/JS reload is not enough
+    validations:
+      required: true
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platforms
+      options:
+        - label: iOS
+        - label: Android
+  - type: textarea
+    id: gated
+    attributes:
+      label: What is waiting on this build
+      description: Backend flags or features that must stay off until participants update (e.g. JITAI_VISIBLE_PUSH)
+  - type: textarea
+    id: verify
+    attributes:
+      label: How to confirm participants have it
+      description: e.g. EMA.app_build on recent check-ins, a test device walkthrough

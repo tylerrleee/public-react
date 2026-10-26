@@ -34,6 +34,7 @@ import {
   ResourceCard,
 } from '../api/types';
 import { isAnswered, isSubItemVisible, pruneHiddenAnswers, visibleSubItems } from '../ema/visibility';
+import { promptMessage } from '../prompts/messages';
 import { useAuthStore } from '../store/authStore';
 import { useAlertStore } from '../store/alertStore';
 import { log } from '../utils/logger';
@@ -84,6 +85,7 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
   const sectionOffsets = useRef<Record<string, number>>({});
 
   const items = survey?.items ?? [];
+  const message = survey?.ema_type === 'prompt_feedback' ? promptMessage(survey.message_prompt_id) : undefined;
   const visibleItems = visibleSubItems(items, answers).filter(isSupported);
   const complete =
     visibleItems.length > 0 && visibleItems.every((sub) => isAnswered(answers[sub.sub_item_id]));
@@ -374,6 +376,12 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
           <Text style={styles.windowNote}>Follow-up check-in</Text>
         )}
 
+        {message && (
+          <View style={styles.promptMessage}>
+            <Text style={styles.promptMessageText}>{message}</Text>
+          </View>
+        )}
+
         {items.map(renderSection)}
       </ScrollView>
     );
@@ -474,6 +482,15 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 24 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   windowNote: { fontSize: 13, color: colors.primary, fontWeight: '600', marginBottom: 20 },
+  promptMessage: {
+    backgroundColor: colors.primaryMuted,
+    borderColor: colors.primaryBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: 20,
+    marginBottom: 28,
+  },
+  promptMessageText: { fontSize: 18, lineHeight: 26, fontWeight: '600', color: colors.textPrimary },
   section: { marginBottom: 12 },
   sectionTitle: { ...typography.heading, marginBottom: 20 },
   group: { marginBottom: 8 },
