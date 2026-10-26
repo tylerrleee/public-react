@@ -274,9 +274,11 @@ def load_ema(
         pd.DataFrame with columns matching app_ema:
             id, user_id, prompt_id, sent_at, responded_at, status, ema_type,
             source_jitai_log_id, outcome_window_start, outcome_window_end,
-            expires_at, app_version, app_build, mood, stress, energy.
+            expires_at, app_version, app_build, app_platform, mood, stress,
+            energy.
         One row per EMA prompt. Timestamps are timezone-aware (UTC).
-        app_version/app_build are blank for builds that did not send them.
+        app_version/app_build/app_platform are blank for builds that did not
+        send them.
 
     Example:
         load_ema(user_id=42, start_date=date(2026,9,1))
@@ -298,6 +300,7 @@ def load_ema(
             "id", "user_id", "prompt_id", "sent_at", "responded_at", "status",
             "ema_type", "source_jitai_log_id", "outcome_window_start",
             "outcome_window_end", "expires_at", "app_version", "app_build",
+            "app_platform",
             "mood", "stress", "energy",
         )
     )

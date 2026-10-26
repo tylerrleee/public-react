@@ -229,6 +229,7 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
         outcome_window_end: survey.outcome_window_end ?? null,
         app_version: Application.nativeApplicationVersion,
         app_build: Application.nativeBuildVersion,
+        app_platform: Platform.OS,
         responses: visibleItems.map((sub) => ({
           sub_item_id: sub.sub_item_id,
           value: answers[sub.sub_item_id],

@@ -241,26 +241,31 @@ def receipt_error_code(receipt) -> str:
     return str(details.get('error') or 'unknown')[:64]
 
 
-def reported_app_build(user) -> int | None:
-    build = (
+def reported_app_build(user) -> tuple[str, int] | None:
+    latest = (
         EMA.objects
         .filter(user=user)
         .exclude(app_build='')
         .order_by('-sent_at')
-        .values_list('app_build', flat=True)
+        .values_list('app_platform', 'app_build')
         .first()
     )
-    return int(build) if build and build.isdigit() else None
+    if not latest or not latest[0] or not latest[1].isdigit():
+        return None
+    return latest[0], int(latest[1])
 
 
 # Per participant, not global: only someone whose app has reported a build that
 # bundles the message bank gets a notification they can actually open.
 def wants_visible_push(user) -> bool:
-    min_build = settings.JITAI_VISIBLE_PUSH_MIN_BUILD
-    if min_build is None:
+    min_builds = settings.JITAI_VISIBLE_PUSH_MIN_BUILDS
+    if not min_builds:
         return False
-    build = reported_app_build(user)
-    return build is not None and build >= min_build
+    reported = reported_app_build(user)
+    if reported is None:
+        return False
+    platform, build = reported
+    return platform in min_builds and build >= min_builds[platform]
 
 
 def build_jitai_push_message(user, jitai_log, visible: bool = False) -> PushMessage:

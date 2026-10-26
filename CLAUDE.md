@@ -155,7 +155,7 @@ that key is accepted for.
 `settings.py` is fully env-driven and picks the database by environment: `DATABASE_URL`
 (Heroku/dj-database-url) → Cloud SQL when `K_SERVICE` is set (GCP) → discrete `DATABASE_*` vars. Key
 env vars: `SECRET_KEY`, `API_KEY`, `DASHBOARD_API_KEY`, `REDIS_URL`, `SENTRY_DSN`,
-`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH_MIN_BUILD` (unset = no visible JITAI push for anyone; when set, only participants whose latest check-in reported that `EMA.app_build` or newer get the neutral title/body).
+`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH_MIN_BUILDS` (e.g. `ios:11,android:13`; unset = no visible JITAI push for anyone; when set, only participants whose latest check-in reported `EMA.app_platform` plus an `EMA.app_build` at or above that platform's minimum get the neutral title/body).
 
 Two push types reach the device (details in `mobile/README.md`): a **visible check-in reminder**
 (`send_checkin_reminders`, which divides 9–21 participant-local time into six fixed two-hour
@@ -224,7 +224,7 @@ randomization and routing audit landed in migrations `0042`–`0043`, and
 `threshold_at_decision` / `threshold_source` in `0046`, and `distress_flag_active` in `0054`); `User` carries `study_id` (migration
 `0051`, see the baseline-import section below) and `schedule_restarted_at` (`0055`: set when staff restart a
 participant's schedule by moving `enrolled_at`; records before it are pre-restart, kept, and logged in `docs/CHANGELOG.md`); `EMA` carries `ema_type`,
-outcome-window fields, `served_sub_item_ids` and `app_version`/`app_build` (`0056`); there are additional tables (`EMAItemResponse`,
+outcome-window fields, `served_sub_item_ids`, `app_version`/`app_build` (`0056`) and `app_platform` (`0057`); there are additional tables (`EMAItemResponse`,
 `EngagementLog`, `PhoneTelemetry`, `EventDay`, `CheckinReminder`, `WearableSync`, `DistressFlag`); and four derived
 `dashboard_*` monitoring tables. For the actual deployed schema,
 trust `backend/app/models.py` and `analytics/analysis-resources/production_schema.md` (the latter maps every
@@ -563,14 +563,18 @@ notification). `messages.json` is generated from `backend/app/data/REACTprompts.
 app copy, and a bank change needs a new app build.
 
 The visible title/body are gated **per participant**, as Dr. Chang required (2026-10-26): only
-when `JITAI_VISIBLE_PUSH_MIN_BUILD` is set and that participant's latest check-in reported an
-`EMA.app_build` at or above it (`wants_visible_push` in `notification_service.py`). Everyone
-else, including anyone on an older build or with no reported build, still gets the data-only
-push, so no one gets a notification that opens nothing. `JITAILog.push_visible` (migration
-`0057`) records which way each send went. The app logs an `EngagementLog` `prompt_message_shown`
-event, linked by `jitai_log`, when it renders the message text. Build 2 (iOS
-`CFBundleVersion`/`CURRENT_PROJECT_VERSION`, Android `versionCode`) is the first that bundles
-the bank, so the setting is `2` for this rollout. It is turned on only after the test on physical phones passes.
+when `JITAI_VISIBLE_PUSH_MIN_BUILDS` is set and that participant's latest check-in reported an
+`EMA.app_platform` and an `EMA.app_build` at or above that platform's minimum
+(`wants_visible_push` in `notification_service.py`). Build numbers differ by platform (iOS and
+Android are numbered separately, and EAS remote versioning auto-increments them), so one number
+cannot gate both. `EMA.app_platform` (migration `0057`) is sent only by builds that also carry
+the message bank, so an older build (blank platform, e.g. the build 10 already in the field)
+never qualifies, whatever its number. Everyone not qualifying still gets the data-only push, so
+no one gets a notification that opens nothing. `JITAILog.push_visible` (also `0057`) records
+which way each send went. The app logs an `EngagementLog` `prompt_message_shown` event, linked by
+`jitai_log`, when it renders the message text. Set the minimums to the build numbers EAS
+actually assigns to the first message-bank binaries, and only after the test on physical phones
+passes.
 
 **Analysis rule (Dr. Chang, 2026-10-26).** All data is kept. A participant's message delivery
 starts at their first `prompt_message_shown` event. Decision points before it stay in the

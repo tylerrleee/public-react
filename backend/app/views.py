@@ -924,6 +924,7 @@ class EMAResponseView(APIView):
             served_sub_item_ids=served,
             app_version=data.get('app_version') or '',
             app_build=data.get('app_build') or '',
+            app_platform=data.get('app_platform') or '',
         )
 
         responses = [

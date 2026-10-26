@@ -193,6 +193,9 @@ class EMA(models.Model):
     # app sent it, and on any submission from a build older than that.
     app_version = models.CharField(max_length=32, blank=True, default='')
     app_build = models.CharField(max_length=32, blank=True, default='')
+    # ios / android. Build numbers differ by platform, so app_build only means
+    # something next to this. Blank from builds older than the message bank.
+    app_platform = models.CharField(max_length=16, blank=True, default='')
     mood = models.PositiveSmallIntegerField(
         null=True, blank=True,
         validators=[MinValueValidator(1), MaxValueValidator(7)],
