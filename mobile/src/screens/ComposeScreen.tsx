@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { Ionicons } from '@expo/vector-icons';
 import ComposeInput from '../components/ComposeInput';
 import SupportResourceCard from '../components/SupportResourceCard';
 import SupportResourcesScreen from './SupportResourcesScreen';
@@ -111,8 +112,21 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
     <>
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text accessibilityRole="header" style={styles.homeTitle}>Home</Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Support resources"
+          style={styles.supportButton}
+          onPress={() => { Keyboard.dismiss(); setSupportResourcesOpen(true); }}
+        >
+          <Ionicons name="help-circle-outline" size={22} color={colors.primary} accessible={false} />
+          <Text style={styles.supportButtonText}>Support resources</Text>
+        </TouchableOpacity>
+      </View>
       <ScrollView
         style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
         {__DEV__ && (
@@ -190,20 +204,13 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
         )}
       </ScrollView>
 
-      <View style={styles.footer} accessibilityRole="toolbar" accessibilityLabel="App menu">
+      <View style={styles.footer}>
         <TouchableOpacity
           accessibilityRole="button"
-          style={styles.menuItem}
-          onPress={() => { Keyboard.dismiss(); setSupportResourcesOpen(true); }}
-        >
-          <Text style={styles.menuItemText}>Support resources</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          accessibilityRole="button"
-          style={styles.menuItem}
+          style={styles.logoutButton}
           onPress={() => { flush(); logout(); }}
         >
-          <Text style={styles.menuItemText}>Log out</Text>
+          <Text style={styles.logoutButtonText}>Log out</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -234,12 +241,43 @@ const styles = StyleSheet.create({
   scrollArea: {
     flex: 1,
   },
+  scrollContent: {
+    paddingTop: 16,
+  },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+  },
+  homeTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.primary,
+    marginRight: 16,
+  },
+  supportButton: {
+    flexDirection: 'row',
+    flexShrink: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primaryBorder,
+    backgroundColor: colors.primaryMuted,
+  },
+  supportButtonText: {
+    flexShrink: 1,
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '600',
   },
   title: {
     fontSize: 24,
@@ -277,21 +315,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   footer: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: '#eee',
     paddingTop: 10,
     paddingBottom: 56,
   },
-  menuItem: {
+  logoutButton: {
     minHeight: 48,
     justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  menuItemText: {
+  logoutButtonText: {
     color: colors.primary,
     fontSize: 13,
     fontWeight: '600',
