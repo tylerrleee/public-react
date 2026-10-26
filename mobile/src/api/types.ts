@@ -78,6 +78,7 @@ export type EMASubmitRequest = {
   outcome_window_end?: string | null;
   app_version?: string | null;
   app_build?: string | null;
+  app_platform?: string | null;
   responses: EMAAnswer[];
 };
 

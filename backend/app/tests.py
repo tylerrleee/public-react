@@ -1728,6 +1728,17 @@ class EngagementEndpointTests(TestCase):
         log = EngagementLog.objects.get(user=self.user)
         self.assertEqual(log.ema, ema)
 
+    def test_prompt_message_shown_links_its_decision(self):
+        from app.models import EngagementLog
+        jitai_log = JITAILog.objects.create(user=self.user, prompt_id='P001', trigger_reason='test')
+        response = self.client.post('/telemetry/engagement/', {
+            'jitai_log': jitai_log.id,
+            'event_type': 'prompt_message_shown',
+            'occurred_at': '2026-11-01T15:10:00Z',
+        }, format='json')
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(EngagementLog.objects.get(user=self.user).jitai_log, jitai_log)
+
     def test_card_shown_on_home_needs_no_ema(self):
         response = self.client.post('/telemetry/engagement/', {
             'event_type': 'resource_card_shown_home',
@@ -3163,36 +3174,83 @@ class SendJITAIPromptTests(TestCase):
         self.assertEqual(message.data['prompt_id'], log.prompt_id)
         self.assertEqual(message.data['jitai_log_id'], log.pk)
 
-    @patch('app.notification_service.PushClient')
-    def test_push_stays_silent_until_visible_push_is_enabled(self, MockPushClient):
+    def _report_build(self, user, build, platform='ios'):
+        EMA.objects.create(
+            user=user, prompt_id=f'EMA-BUILD-{platform}-{build}', status='completed',
+            app_build=build, app_platform=platform,
+        )
+
+    def _send(self, MockPushClient, user):
         from app.notification_service import send_jitai_prompt
-        user = self._make_user_with_token()
         log = self._make_log(user)
         MockPushClient.return_value.publish.return_value = MagicMock()
+        send_jitai_prompt(user, log)
+        log.refresh_from_db()
+        return MockPushClient.return_value.publish.call_args[0][0], log
 
-        with override_settings(JITAI_VISIBLE_PUSH=False):
-            send_jitai_prompt(user, log)
-
-        message = MockPushClient.return_value.publish.call_args[0][0]
+    def _assert_silent(self, message, log):
         self.assertIsNone(getattr(message, 'title', None))
         self.assertIsNone(getattr(message, 'body', None))
+        self.assertFalse(log.push_visible)
 
-    @override_settings(JITAI_VISIBLE_PUSH=True)
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={})
     @patch('app.notification_service.PushClient')
-    def test_push_is_visible_but_carries_no_message_text(self, MockPushClient):
-        from app.notification_service import load_prompt_messages, send_jitai_prompt
+    def test_push_stays_silent_while_visible_push_is_unset(self, MockPushClient):
         user = self._make_user_with_token()
-        log = self._make_log(user)
-        MockPushClient.return_value.publish.return_value = MagicMock()
+        self._report_build(user, '11')
 
-        send_jitai_prompt(user, log)
+        self._assert_silent(*self._send(MockPushClient, user))
 
-        message = MockPushClient.return_value.publish.call_args[0][0]
-        self.assertEqual(message.title, 'REACT')
-        self.assertEqual(message.body, 'You have a new message.')
-        sent = f'{message.title} {message.body} {message.data}'
-        for text in load_prompt_messages().values():
-            self.assertNotIn(text, sent)
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={'ios': 11, 'android': 13})
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_for_build_that_predates_platform_reporting(self, MockPushClient):
+        user = self._make_user_with_token()
+        EMA.objects.create(user=user, prompt_id='EMA-B10', status='completed',
+                           app_version='1.0.0', app_build='10')
+
+        self._assert_silent(*self._send(MockPushClient, user))
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={'ios': 11, 'android': 13})
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_below_the_platform_minimum(self, MockPushClient):
+        user = self._make_user_with_token()
+        self._report_build(user, '12', platform='android')
+
+        self._assert_silent(*self._send(MockPushClient, user))
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={'ios': 11})
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_for_platform_without_a_minimum(self, MockPushClient):
+        user = self._make_user_with_token()
+        self._report_build(user, '99', platform='android')
+
+        self._assert_silent(*self._send(MockPushClient, user))
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={'ios': 11})
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_for_participant_with_no_reported_build(self, MockPushClient):
+        user = self._make_user_with_token()
+        EMA.objects.create(user=user, prompt_id='EMA-OLD-APP', status='completed')
+
+        self._assert_silent(*self._send(MockPushClient, user))
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILDS={'ios': 11, 'android': 13})
+    @patch('app.notification_service.PushClient')
+    def test_push_is_visible_at_the_platform_minimum_but_carries_no_message_text(self, MockPushClient):
+        from app.notification_service import load_prompt_messages
+        for platform, build in (('ios', '11'), ('android', '13')):
+            with self.subTest(platform=platform):
+                user = self._make_user_with_token(email=f'{platform}@ufl.edu')
+                self._report_build(user, build, platform=platform)
+
+                message, log = self._send(MockPushClient, user)
+
+                self.assertEqual(message.title, 'REACT')
+                self.assertEqual(message.body, 'You have a new message.')
+                self.assertTrue(log.push_visible)
+                sent = f'{message.title} {message.body} {message.data}'
+                for text in load_prompt_messages().values():
+                    self.assertNotIn(text, sent)
 
     @patch('app.notification_service.PushClient')
     def test_no_push_token_returns_false_without_calling_expo(self, MockPushClient):
@@ -4540,6 +4598,7 @@ class EMARotationEndpointTests(TestCase):
             'ema_type': 'scheduled_check_in',
             'app_version': '1.1.0',
             'app_build': '14',
+            'app_platform': 'ios',
             'responses': [
                 {'sub_item_id': 'B1_valence', 'value': 4},
             ],
@@ -4548,7 +4607,7 @@ class EMARotationEndpointTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()['app_build'], '14')
         ema = EMA.objects.get(prompt_id=self.reminder.prompt_id)
-        self.assertEqual((ema.app_version, ema.app_build), ('1.1.0', '14'))
+        self.assertEqual((ema.app_version, ema.app_build, ema.app_platform), ('1.1.0', '14', 'ios'))
 
     def test_submit_variable_ema_responses(self):
         response = self.client.post('/ema/responses/', {

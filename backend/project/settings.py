@@ -53,9 +53,16 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
 DASHBOARD_API_KEY = os.getenv('DASHBOARD_API_KEY', '')
 API_KEY = os.getenv('API_KEY', '')
-# Off until every participant runs an app build that bundles the message bank:
-# an older build would show the notification and then no message.
-JITAI_VISIBLE_PUSH = os.getenv('JITAI_VISIBLE_PUSH', 'False').lower() == 'true'
+# Unset means no visible JITAI push for anyone. Set as "ios:11,android:13": only
+# participants whose latest check-in came from at least that build on their
+# platform get it, since an older build would show the notification and then no
+# message. Build numbers differ by platform, so each gets its own minimum.
+JITAI_VISIBLE_PUSH_MIN_BUILDS = {
+    platform.strip(): int(build)
+    for platform, build in (
+        entry.split(':') for entry in os.getenv('JITAI_VISIBLE_PUSH_MIN_BUILDS', '').split(',') if entry.strip()
+    )
+}
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 if SENTRY_DSN:
