@@ -1,0 +1,41 @@
+name: Decision needed
+description: A technical or research-design question deferred for later. Use the pi-signoff label when Dr. Chang has to approve it.
+title: "[decision] "
+labels: ["decision-needed"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: The decision, stated so it can be answered yes/no or by picking an option
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What prompted it, with file and line references
+  - type: textarea
+    id: options
+    attributes:
+      label: Options and current default
+      description: What the code does today if nobody decides
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Who decides
+      options:
+        - Dr. Chang (PI sign-off)
+        - Dustin
+        - Team
+    validations:
+      required: true
+  - type: input
+    id: deadline
+    attributes:
+      label: Needed by
+      description: Date or milestone (e.g. before Phase 2 enrollment, next Friday sync)
+  - type: textarea
+    id: blocks
+    attributes:
+      label: What it blocks

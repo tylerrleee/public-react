@@ -690,6 +690,27 @@ auto-generated PKs and timestamps.
 
 ---
 
+## Follow-ups go to GitHub Issues
+
+When work turns up something that can't be finished in the current change, file it as an issue
+on `smashlab-uf/REACT` with `gh issue create` instead of leaving it in a chat reply, a code comment
+or a TODO. Create the issue without asking first, then give the user its link. Before filing,
+run `gh issue list --label <label> --state open` and add a comment to a matching issue rather
+than opening a duplicate. Issue bodies carry no Claude attribution.
+
+| Label | When to file | Template |
+|---|---|---|
+| `mobile-rebuild` | A change reaches participants only through a new app build: a native dependency, `app.json`/config, a bundled asset such as `mobile/src/prompts/messages.json`, or JS that a backend flag depends on | `.github/ISSUE_TEMPLATE/mobile-rebuild.yml` |
+| `decision-needed` | A technical choice deferred for later, where the code currently runs on a provisional default | `.github/ISSUE_TEMPLATE/decision-needed.yml` |
+| `pi-signoff` | Add to `decision-needed` when Dr. Chang must approve it: thresholds, protocol timings such as `OUTCOME_CHECK_IN_DELAY_MINUTES`, IRB scope, RA access | same |
+
+Give each issue the branch name, the files involved, and what stays gated until it closes. Put
+`Needs rebuild: #N` / `Open decision: #N` lines in the PR description. A rebuild issue closes
+when the build ships and recent `EMA.app_build` values confirm participants are on it, not when
+the PR merges.
+
+---
+
 ## Coding Conventions
 
 - No comments in code
