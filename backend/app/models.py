@@ -302,6 +302,7 @@ ENGAGEMENT_EVENT_TYPES = (
     ('notification_dismissed', 'Notification Dismissed'),
     ('resource_card_shown_checkin', 'Resource Card Shown After Check-in'),
     ('resource_card_shown_home', 'Resource Card Shown On Home'),
+    ('prompt_message_shown', 'Prompt Message Shown'),
 )
 
 def validate_phone_metadata(value):
@@ -395,6 +396,9 @@ class JITAILog(models.Model):
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='pending')
     decision_made_at = models.DateTimeField(default=timezone.now, db_index=True)
     push_sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Whether the push carried the visible title/body. False on every row sent
+    # before the message bank shipped, and for anyone not yet on that build.
+    push_visible = models.BooleanField(default=False)
     device_received_at = models.DateTimeField(null=True, blank=True, db_index=True)
     receipt_reported_at = models.DateTimeField(null=True, blank=True, db_index=True)
     receipt_event_id = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)

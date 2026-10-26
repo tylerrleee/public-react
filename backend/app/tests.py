@@ -1728,6 +1728,17 @@ class EngagementEndpointTests(TestCase):
         log = EngagementLog.objects.get(user=self.user)
         self.assertEqual(log.ema, ema)
 
+    def test_prompt_message_shown_links_its_decision(self):
+        from app.models import EngagementLog
+        jitai_log = JITAILog.objects.create(user=self.user, prompt_id='P001', trigger_reason='test')
+        response = self.client.post('/telemetry/engagement/', {
+            'jitai_log': jitai_log.id,
+            'event_type': 'prompt_message_shown',
+            'occurred_at': '2026-11-01T15:10:00Z',
+        }, format='json')
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        self.assertEqual(EngagementLog.objects.get(user=self.user).jitai_log, jitai_log)
+
     def test_card_shown_on_home_needs_no_ema(self):
         response = self.client.post('/telemetry/engagement/', {
             'event_type': 'resource_card_shown_home',
@@ -3163,33 +3174,63 @@ class SendJITAIPromptTests(TestCase):
         self.assertEqual(message.data['prompt_id'], log.prompt_id)
         self.assertEqual(message.data['jitai_log_id'], log.pk)
 
-    @patch('app.notification_service.PushClient')
-    def test_push_stays_silent_until_visible_push_is_enabled(self, MockPushClient):
+    def _report_build(self, user, build):
+        EMA.objects.create(user=user, prompt_id=f'EMA-BUILD-{build}', status='completed', app_build=build)
+
+    def _send(self, MockPushClient, user):
         from app.notification_service import send_jitai_prompt
-        user = self._make_user_with_token()
         log = self._make_log(user)
         MockPushClient.return_value.publish.return_value = MagicMock()
+        send_jitai_prompt(user, log)
+        log.refresh_from_db()
+        return MockPushClient.return_value.publish.call_args[0][0], log
 
-        with override_settings(JITAI_VISIBLE_PUSH=False):
-            send_jitai_prompt(user, log)
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILD=None)
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_while_visible_push_is_unset(self, MockPushClient):
+        user = self._make_user_with_token()
+        self._report_build(user, '2')
 
-        message = MockPushClient.return_value.publish.call_args[0][0]
+        message, log = self._send(MockPushClient, user)
+
         self.assertIsNone(getattr(message, 'title', None))
         self.assertIsNone(getattr(message, 'body', None))
+        self.assertFalse(log.push_visible)
 
-    @override_settings(JITAI_VISIBLE_PUSH=True)
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILD=2)
     @patch('app.notification_service.PushClient')
-    def test_push_is_visible_but_carries_no_message_text(self, MockPushClient):
-        from app.notification_service import load_prompt_messages, send_jitai_prompt
+    def test_push_stays_silent_for_participant_on_older_build(self, MockPushClient):
         user = self._make_user_with_token()
-        log = self._make_log(user)
-        MockPushClient.return_value.publish.return_value = MagicMock()
+        self._report_build(user, '1')
 
-        send_jitai_prompt(user, log)
+        message, log = self._send(MockPushClient, user)
 
-        message = MockPushClient.return_value.publish.call_args[0][0]
+        self.assertIsNone(getattr(message, 'title', None))
+        self.assertFalse(log.push_visible)
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILD=2)
+    @patch('app.notification_service.PushClient')
+    def test_push_stays_silent_for_participant_with_no_reported_build(self, MockPushClient):
+        user = self._make_user_with_token()
+        EMA.objects.create(user=user, prompt_id='EMA-OLD-APP', status='completed')
+
+        message, log = self._send(MockPushClient, user)
+
+        self.assertIsNone(getattr(message, 'title', None))
+        self.assertFalse(log.push_visible)
+
+    @override_settings(JITAI_VISIBLE_PUSH_MIN_BUILD=2)
+    @patch('app.notification_service.PushClient')
+    def test_push_is_visible_on_new_build_but_carries_no_message_text(self, MockPushClient):
+        from app.notification_service import load_prompt_messages
+        user = self._make_user_with_token()
+        self._report_build(user, '2')
+
+        message, log = self._send(MockPushClient, user)
+
         self.assertEqual(message.title, 'REACT')
         self.assertEqual(message.body, 'You have a new message.')
+        self.assertTrue(log.push_visible)
         sent = f'{message.title} {message.body} {message.data}'
         for text in load_prompt_messages().values():
             self.assertNotIn(text, sent)

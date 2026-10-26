@@ -155,7 +155,7 @@ that key is accepted for.
 `settings.py` is fully env-driven and picks the database by environment: `DATABASE_URL`
 (Heroku/dj-database-url) → Cloud SQL when `K_SERVICE` is set (GCP) → discrete `DATABASE_*` vars. Key
 env vars: `SECRET_KEY`, `API_KEY`, `DASHBOARD_API_KEY`, `REDIS_URL`, `SENTRY_DSN`,
-`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH` (default off — sends the JITAI push with its neutral title/body; turn on only once every participant runs a build that bundles `messages.json`).
+`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH_MIN_BUILD` (unset = no visible JITAI push for anyone; when set, only participants whose latest check-in reported that `EMA.app_build` or newer get the neutral title/body).
 
 Two push types reach the device (details in `mobile/README.md`): a **visible check-in reminder**
 (`send_checkin_reminders`, which divides 9–21 participant-local time into six fixed two-hour
@@ -560,7 +560,23 @@ Until 2026-10-26 the push had no title or body and the app had no bank, so no JI
 ever displayed (production: 41 sent from 2026-09-30, 1 reached the app, 0 opened from a
 notification). `messages.json` is generated from `backend/app/data/REACTprompts.csv` by
 `manage.py dump_prompt_messages`; `--check` (also a test) fails when the CSV changes without the
-app copy, and a bank change needs a new app build. The visible title/body are sent only when `JITAI_VISIBLE_PUSH=true`; with it off the push stays data-only, as before.
+app copy, and a bank change needs a new app build.
+
+The visible title/body are gated **per participant**, as Dr. Chang required (2026-10-26): only
+when `JITAI_VISIBLE_PUSH_MIN_BUILD` is set and that participant's latest check-in reported an
+`EMA.app_build` at or above it (`wants_visible_push` in `notification_service.py`). Everyone
+else, including anyone on an older build or with no reported build, still gets the data-only
+push, so no one gets a notification that opens nothing. `JITAILog.push_visible` (migration
+`0057`) records which way each send went. The app logs an `EngagementLog` `prompt_message_shown`
+event, linked by `jitai_log`, when it renders the message text. Build 2 (iOS
+`CFBundleVersion`/`CURRENT_PROJECT_VERSION`, Android `versionCode`) is the first that bundles
+the bank, so the setting is `2` for this rollout. It is turned on only after the test on physical phones passes.
+
+**Analysis rule (Dr. Chang, 2026-10-26).** All data is kept. A participant's message delivery
+starts at their first `prompt_message_shown` event. Decision points before it stay in the
+dataset but are excluded from any analysis of message effects or engagement, and so are the C0
+ratings from before it, since some were given with no message on screen. Check-ins, the MSSD
+detector, randomization, distress flags and wearable data from that period stay usable.
 
 Expo push token is stored in `User.push_token` and updated on app launch.
 
