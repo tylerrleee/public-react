@@ -9,6 +9,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "11",
       "bundleIdentifier": "com.smashlab.react",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -21,6 +22,7 @@
     },
     "android": {
       "package": "com.smashlab.react",
+      "versionCode": 13,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#365776",

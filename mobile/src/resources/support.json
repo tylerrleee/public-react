@@ -1,0 +1,41 @@
+{
+  "title": "Support resources",
+  "message": "If you or someone else is in immediate danger, call 911 or go to the nearest emergency department. These resources are available to you at any time.",
+  "resources": [
+    {
+      "name": "Campus Counseling Center",
+      "description": "Provides counseling, crisis support, and mental health services for University of Florida students.",
+      "contact": "(352) 392-1575"
+    },
+    {
+      "name": "988 Suicide and Crisis Lifeline",
+      "description": "Call or text 988. Provides 24/7 confidential crisis support for people experiencing suicidal thoughts, emotional distress, or a mental health crisis.",
+      "contact": "988"
+    },
+    {
+      "name": "Hitchcock Field & Fork Pantry",
+      "description": "Provides food and basic necessities to members of the UF community experiencing food insecurity.",
+      "contact": "(352) 294-3601"
+    },
+    {
+      "name": "National Alliance for Eating Disorders Helpline",
+      "description": "Provides eating disorder support.",
+      "contact": "1-866-662-1235"
+    },
+    {
+      "name": "SAMHSA National Helpline",
+      "description": "Provides 24/7 treatment referrals and information for mental health and substance-use concerns.",
+      "contact": "1-800-662-4357"
+    },
+    {
+      "name": "National Problem Gambling Helpline",
+      "description": "Also 1-800-MY-RESET.",
+      "contact": "1-800-697-3738"
+    },
+    {
+      "name": "Florida's Gambling Helpline",
+      "description": "Also 888-ADMIT-IT. Florida-specific gambling support, treatment referrals, and information.",
+      "contact": "888-236-4848"
+    }
+  ]
+}

@@ -104,6 +104,22 @@ Repeat on an iPhone test account and an Android test account against the updated
 5. On test data, verify the card clears when the last momentary flag expires, stays through overlapping flags, and stays for a suppressing baseline flag until staff document contact. After staff clear the baseline flag, foreground the app or wait for the next Home refresh.
 6. Log out and use a different account; the previous account's card must not carry over.
 
+### Support resources menu
+
+The fixed Home header includes a **Support resources** button with a help icon. It remains visible while scrolling; **Log out** stays separately in the footer. The button opens a scrollable screen with the same seven resources and call buttons used by the flagged-check-in card. **Done** or Android Back returns to Home and preserves the compose draft. Resources are available to every signed-in participant, even without a check-in or distress flag, and work offline after a fresh launch.
+
+The menu bundles `src/resources/support.json`, an exact copy of `app.distress.resource_card()`. The backend test `app.tests.SupportResourcesAppCopyTests` checks for drift. When the backend wording changes, regenerate this file from `backend/` and include it in the next mobile build:
+
+```bash
+python manage.py shell -c 'import json; from pathlib import Path; from django.conf import settings; from app.distress import resource_card; (settings.BASE_DIR.parent / "mobile/src/resources/support.json").write_text(json.dumps(resource_card(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")'
+```
+
+Automatic Home and post-check-in cards retain their existing flag-driven behavior and engagement events. Opening the menu does not create a distress flag or report an automatic card-display event.
+
+For device QA, use an account without a distress flag or an available check-in. Confirm the **Support resources** header button stays visible when scrolling Home, then open it, scroll through all seven entries, and verify a call button opens the dialer. Return using **Done**, reopen, and verify Android Back also closes the screen. Repeat after a cold launch in airplane mode, and confirm an existing compose draft survives opening and closing resources. With an active flag, verify the automatic card and check-in flow still work independently.
+
+This update also removes notification engagement debug toasts. The committed build numbers are iOS **11** and Android **13** (app version `1.0.0`). Production EAS builds use remote versioning and auto-increment, so verify the assigned numbers on the resulting binaries before checking `EMA.app_build`.
+
 ## Local backend
 
 Only needed if `ACTIVE_ENV` is `'dev'`. On a Mac:
