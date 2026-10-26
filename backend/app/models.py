@@ -402,6 +402,16 @@ class JITAILog(models.Model):
     # Whether the push carried the visible title/body. False on every row sent
     # before the message bank shipped, and for anyone not yet on that build.
     push_visible = models.BooleanField(default=False)
+    # Copied from the raw events by app/decision_log.py so each decision row
+    # carries its own outcome. opened_at is the earliest notification tap or
+    # in-app message display; the C0 fields stay blank when none was given.
+    opened_at = models.DateTimeField(null=True, blank=True)
+    opened_via = models.CharField(
+        max_length=16, blank=True, default='',
+        choices=[('notification_tap', 'Notification tap'), ('in_app', 'Shown in app')],
+    )
+    c0_helpful = models.CharField(max_length=16, blank=True, default='')
+    c0_responded_at = models.DateTimeField(null=True, blank=True)
     device_received_at = models.DateTimeField(null=True, blank=True, db_index=True)
     receipt_reported_at = models.DateTimeField(null=True, blank=True, db_index=True)
     receipt_event_id = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)

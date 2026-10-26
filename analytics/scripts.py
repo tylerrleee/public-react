@@ -339,7 +339,9 @@ def load_jitai_log(
             run_in / distress_baseline / distress_momentary for one held back
             on purpose), push_visible (True when the push carried the visible
             title/body; False before the message bank shipped and for anyone
-            not yet on that build).
+            not yet on that build), opened_at/opened_via (earliest notification
+            tap or in-app message display), c0_helpful/c0_responded_at (blank
+            when no C0 rating was given).
         One row per decision point. Timestamps are timezone-aware (UTC).
 
     Example:
@@ -366,13 +368,15 @@ def load_jitai_log(
             "ema_energy", "status", "delivery_status", "push_sent_at",
             "device_received_at", "receipt_reported_at", "receipt_platform",
             "receipt_app_state", "delivery_error", "suppression_reason",
-            "distress_flag_active", "push_visible",
+            "distress_flag_active", "push_visible", "opened_at", "opened_via",
+            "c0_helpful", "c0_responded_at",
         )
     )
     return _to_utc(
         df,
         ["triggered_at", "decision_made_at", "push_sent_at",
-         "device_received_at", "receipt_reported_at"],
+         "device_received_at", "receipt_reported_at", "opened_at",
+         "c0_responded_at"],
     )
 
 

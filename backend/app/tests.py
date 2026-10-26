@@ -6386,3 +6386,163 @@ class SupportResourcesAppCopyTests(SimpleTestCase):
         path = settings.BASE_DIR.parent / 'mobile' / 'src' / 'resources' / 'support.json'
         bundled = json.loads(path.read_text(encoding='utf-8'))
         self.assertEqual(bundled, resource_card())
+
+
+class DecisionRowOutcomeTests(TestCase):
+    def setUp(self):
+        self.user = make_user(email='outcome@ufl.edu')
+        self.client = authenticated_client(self.user)
+        self.decided = timezone.now() - timedelta(minutes=30)
+        self.decision = JITAILog.objects.create(
+            user=self.user, prompt_id='P001', trigger_reason='test', send_prompt=True,
+            decision_point_id='ema_outcome_1', decision_made_at=self.decided,
+            push_sent_at=self.decided,
+        )
+
+    def _event(self, event_type, minutes_after, **extra):
+        return self.client.post('/telemetry/engagement/', {
+            'event_type': event_type,
+            'occurred_at': (self.decided + timedelta(minutes=minutes_after)).isoformat(),
+            **extra,
+        }, format='json')
+
+    def test_tap_then_message_records_the_tap(self):
+        self._event('notification_tapped', 5, jitai_log=self.decision.id)
+        self._event('prompt_message_shown', 6, jitai_log=self.decision.id)
+
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.opened_via, 'notification_tap')
+        self.assertEqual(self.decision.opened_at, self.decided + timedelta(minutes=5))
+
+    def test_earliest_open_wins_whatever_order_requests_arrive(self):
+        self._event('prompt_message_shown', 6, jitai_log=self.decision.id)
+        self._event('notification_tapped', 5, jitai_log=self.decision.id)
+
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.opened_via, 'notification_tap')
+        self.assertEqual(self.decision.opened_at, self.decided + timedelta(minutes=5))
+
+    def test_message_shown_with_app_open_records_in_app(self):
+        self._event('prompt_message_shown', 1, jitai_log=self.decision.id)
+
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.opened_via, 'in_app')
+
+    def test_other_events_do_not_count_as_opening(self):
+        self._event('ema_opened', 1, jitai_log=self.decision.id)
+
+        self.decision.refresh_from_db()
+        self.assertIsNone(self.decision.opened_at)
+
+    def test_c0_rating_and_time_land_on_the_decision_row(self):
+        response = self.client.post('/ema/responses/', {
+            'prompt_id': f'EMA-C0-{self.decision.id}',
+            'ema_type': 'prompt_feedback',
+            'jitai_log_id': self.decision.id,
+            'responses': [
+                {'sub_item_id': 'C0_helpful', 'value': 'Somewhat'},
+                {'sub_item_id': 'C0_behavior_change', 'value': 'I paused or waited'},
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.c0_helpful, 'Somewhat')
+        self.assertEqual(self.decision.c0_responded_at, EMA.objects.get(pk=response.json()['id']).responded_at)
+
+    def test_dismissed_c0_leaves_the_rating_blank(self):
+        self.client.post('/ema/responses/', {
+            'prompt_id': f'EMA-C0-{self.decision.id}',
+            'ema_type': 'prompt_feedback',
+            'jitai_log_id': self.decision.id,
+            'responses': [],
+        }, format='json')
+
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.c0_helpful, '')
+        self.assertIsNone(self.decision.c0_responded_at)
+
+    def test_checkin_card_shown_before_the_decision_is_linked_when_it_is_made(self):
+        from app.decision_log import link_checkin_cards_to
+        from app.models import EngagementLog
+        checkin = EMA.objects.create(user=self.user, prompt_id='EMA-CARD', status='completed')
+        self._event('resource_card_shown_checkin', 31, ema=checkin.id)
+        event = EngagementLog.objects.get(event_type='resource_card_shown_checkin')
+        self.assertIsNone(event.jitai_log)
+
+        later = JITAILog.objects.create(
+            user=self.user, prompt_id='', trigger_reason='test', send_prompt=False,
+            decision_point_id='ema_outcome_2', ema=checkin,
+        )
+        link_checkin_cards_to(later)
+
+        event.refresh_from_db()
+        self.assertEqual(event.jitai_log, later)
+
+    def test_checkin_card_shown_after_the_decision_is_linked_on_arrival(self):
+        from app.models import EngagementLog
+        checkin = EMA.objects.create(user=self.user, prompt_id='EMA-CARD-2', status='completed')
+        JITAILog.objects.filter(pk=self.decision.pk).update(ema=checkin)
+
+        self._event('resource_card_shown_checkin', 2, ema=checkin.id)
+
+        self.assertEqual(EngagementLog.objects.get().jitai_log_id, self.decision.id)
+
+    def test_home_card_is_tied_to_the_latest_preceding_decision(self):
+        from app.models import EngagementLog
+        JITAILog.objects.create(
+            user=self.user, prompt_id='', trigger_reason='test', send_prompt=False,
+            decision_point_id='ema_outcome_future', decision_made_at=self.decided + timedelta(hours=2),
+        )
+
+        self._event('resource_card_shown_home', 10)
+
+        self.assertEqual(EngagementLog.objects.get().jitai_log_id, self.decision.id)
+
+    def test_backfill_fills_old_rows_once_and_dry_run_writes_nothing(self):
+        from app.models import EMAItemResponse, EngagementLog
+        EngagementLog.objects.create(
+            user=self.user, jitai_log=self.decision, event_type='notification_tapped',
+            occurred_at=self.decided + timedelta(minutes=3),
+        )
+        c0 = EMA.objects.create(
+            user=self.user, prompt_id='EMA-C0-OLD', status='completed', ema_type='prompt_feedback',
+            source_jitai_log=self.decision, responded_at=self.decided + timedelta(minutes=4),
+        )
+        EMAItemResponse.objects.create(
+            ema=c0, item_id='C0', sub_item_id='C0_helpful', response_type='single_choice', value_choice='Yes',
+        )
+
+        out = StringIO()
+        call_command('backfill_decision_log', dry_run=True, stdout=out)
+        self.assertIn('would fill opened_at on 1 decisions, C0 on 1', out.getvalue())
+        self.decision.refresh_from_db()
+        self.assertIsNone(self.decision.opened_at)
+
+        call_command('backfill_decision_log', stdout=StringIO())
+        self.decision.refresh_from_db()
+        self.assertEqual(self.decision.opened_via, 'notification_tap')
+        self.assertEqual(self.decision.c0_helpful, 'Yes')
+
+        out = StringIO()
+        call_command('backfill_decision_log', stdout=out)
+        self.assertIn('filled opened_at on 0 decisions, C0 on 0', out.getvalue())
+
+    def test_export_has_one_row_per_decision_with_its_outcome(self):
+        import csv
+        self.user.study_id = 'RS99'
+        self.user.save()
+        self._event('notification_tapped', 5, jitai_log=self.decision.id)
+        self._event('resource_card_shown_home', 7)
+        self._event('resource_card_shown_home', 8)
+
+        out = StringIO()
+        call_command('export_decision_log', sent_only=True, stdout=out)
+
+        rows = list(csv.DictReader(StringIO(out.getvalue())))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['decision_point_id'], 'ema_outcome_1')
+        self.assertEqual(rows[0]['participant'], 'RS99')
+        self.assertEqual(rows[0]['opened_via'], 'notification_tap')
+        self.assertEqual(rows[0]['resource_card_shown_n'], '2')
+        self.assertNotIn('outcome@ufl.edu', out.getvalue())
