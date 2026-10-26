@@ -155,14 +155,14 @@ that key is accepted for.
 `settings.py` is fully env-driven and picks the database by environment: `DATABASE_URL`
 (Heroku/dj-database-url) → Cloud SQL when `K_SERVICE` is set (GCP) → discrete `DATABASE_*` vars. Key
 env vars: `SECRET_KEY`, `API_KEY`, `DASHBOARD_API_KEY`, `REDIS_URL`, `SENTRY_DSN`,
-`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`).
+`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH` (default off — sends the JITAI push with its neutral title/body; turn on only once every participant runs a build that bundles `messages.json`).
 
 Two push types reach the device (details in `mobile/README.md`): a **visible check-in reminder**
 (`send_checkin_reminders`, which divides 9–21 participant-local time into six fixed two-hour
 slots and fires at most one reminder per slot, 30 min after it opens, only where no check-in
 has landed and never as a catch-up; there is no cooldown, and the 120 minutes sometimes quoted
 as one is just the slot length; it also sends the **outcome check-in reminder** described below) and a
-**silent JITAI prompt** (`evaluate_jitai_triggers`, sent only after a
+**JITAI prompt** with a fixed, neutral title/body (`evaluate_jitai_triggers`, sent only after a
 newly completed EMA passes eligibility + randomization).
 
 `send_jitai_prompt` stores Expo's ticket ID on `JITAILog.expo_ticket_id`. `check_expo_receipts` asks Expo for
@@ -548,10 +548,19 @@ for the rest of the study, by design.
 
 ## Notification Pipeline
 
-Silent pushes are used so notification content never transits Expo/Firebase servers as stored
-data. Only the `prompt_id` (a reference to a template) is stored in `JITAILog`, never the
-message text itself. This is a privacy/IRB constraint — do not store notification title or
-message body in the database.
+Message text never transits Expo/Firebase servers. The JITAI push carries a fixed, neutral
+title/body (`JITAI_PUSH_TITLE` / `JITAI_PUSH_BODY` in `notification_service.py`, identical for
+every arm and message) plus `prompt_id`; the app looks the ID up in its bundled copy of the bank
+(`mobile/src/prompts/messages.json`) and shows the text above the C0 rating, which `/ema/next/`
+serves with `message_prompt_id`. Only the `prompt_id` is stored in `JITAILog`, never the message
+text. This is a privacy/IRB constraint — do not store notification title or message body in the
+database, and do not put message text in the push.
+
+Until 2026-10-26 the push had no title or body and the app had no bank, so no JITAI message was
+ever displayed (production: 41 sent from 2026-09-30, 1 reached the app, 0 opened from a
+notification). `messages.json` is generated from `backend/app/data/REACTprompts.csv` by
+`manage.py dump_prompt_messages`; `--check` (also a test) fails when the CSV changes without the
+app copy, and a bank change needs a new app build. The visible title/body are sent only when `JITAI_VISIBLE_PUSH=true`; with it off the push stays data-only, as before.
 
 Expo push token is stored in `User.push_token` and updated on app launch.
 

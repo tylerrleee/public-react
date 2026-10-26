@@ -744,6 +744,7 @@ class EMANextView(APIView):
                 'prompt_id': f'EMA-C0-{feedback_jitai.id}',
                 'ema_type': 'prompt_feedback',
                 'jitai_log_id': feedback_jitai.id,
+                'message_prompt_id': feedback_jitai.prompt_id,
                 'outcome_window_active': False,
                 'items': feedback_items,
                 'served_sub_item_ids': _served_sub_item_ids(feedback_items),

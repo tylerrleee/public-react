@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from django.core.management import call_command
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
@@ -3163,8 +3164,23 @@ class SendJITAIPromptTests(TestCase):
         self.assertEqual(message.data['jitai_log_id'], log.pk)
 
     @patch('app.notification_service.PushClient')
-    def test_push_payload_is_content_free(self, MockPushClient):
+    def test_push_stays_silent_until_visible_push_is_enabled(self, MockPushClient):
         from app.notification_service import send_jitai_prompt
+        user = self._make_user_with_token()
+        log = self._make_log(user)
+        MockPushClient.return_value.publish.return_value = MagicMock()
+
+        with override_settings(JITAI_VISIBLE_PUSH=False):
+            send_jitai_prompt(user, log)
+
+        message = MockPushClient.return_value.publish.call_args[0][0]
+        self.assertIsNone(getattr(message, 'title', None))
+        self.assertIsNone(getattr(message, 'body', None))
+
+    @override_settings(JITAI_VISIBLE_PUSH=True)
+    @patch('app.notification_service.PushClient')
+    def test_push_is_visible_but_carries_no_message_text(self, MockPushClient):
+        from app.notification_service import load_prompt_messages, send_jitai_prompt
         user = self._make_user_with_token()
         log = self._make_log(user)
         MockPushClient.return_value.publish.return_value = MagicMock()
@@ -3172,8 +3188,11 @@ class SendJITAIPromptTests(TestCase):
         send_jitai_prompt(user, log)
 
         message = MockPushClient.return_value.publish.call_args[0][0]
-        self.assertIsNone(getattr(message, 'title', None))
-        self.assertIsNone(getattr(message, 'body', None))
+        self.assertEqual(message.title, 'REACT')
+        self.assertEqual(message.body, 'You have a new message.')
+        sent = f'{message.title} {message.body} {message.data}'
+        for text in load_prompt_messages().values():
+            self.assertNotIn(text, sent)
 
     @patch('app.notification_service.PushClient')
     def test_no_push_token_returns_false_without_calling_expo(self, MockPushClient):
@@ -4302,6 +4321,7 @@ class EMARotationEndpointTests(TestCase):
         self.assertTrue(data['should_show'])
         self.assertEqual(data['ema_type'], 'prompt_feedback')
         self.assertEqual(data['jitai_log_id'], jitai_log.id)
+        self.assertEqual(data['message_prompt_id'], 'JITAI-EMA-1')
         self.assertEqual([item['item_id'] for item in data['items']], ['C0'])
 
     def _decision(self, minutes_ago, draw, p=0.5, point='ema_1', user=None):
@@ -6266,3 +6286,16 @@ class BackfillDistressFlagActiveTests(TestCase):
         self.assertIn('changed 0', self._run())
         row.refresh_from_db()
         self.assertTrue(row.distress_flag_active)
+
+
+class PromptMessagesAppCopyTests(SimpleTestCase):
+    def test_app_copy_matches_message_bank(self):
+        call_command('dump_prompt_messages', check=True, stdout=StringIO())
+
+    def test_every_deliverable_prompt_has_text_in_the_app(self):
+        from app.management.commands.dump_prompt_messages import prompt_messages_path
+        from app.notification_service import _CONTROL_CATALOG, _EMA_CATALOG
+        bundled = json.loads(prompt_messages_path().read_text(encoding='utf-8'))
+        for prompt in _EMA_CATALOG + _CONTROL_CATALOG:
+            with self.subTest(prompt_id=prompt['id']):
+                self.assertTrue(bundled.get(prompt['id']))

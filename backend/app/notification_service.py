@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 from types import SimpleNamespace
 
+from django.conf import settings
 from django.utils import timezone
 
 from exponent_server_sdk import (
@@ -18,6 +19,8 @@ from app.ema_catalog import ROUTING_SUB_ITEM_IDS, ROUTING_TRIGGER_RULES
 
 logger = logging.getLogger(__name__)
 EXPO_PUSH_TOKEN_PREFIXES = ('ExponentPushToken[', 'ExpoPushToken[')
+JITAI_PUSH_TITLE = 'REACT'
+JITAI_PUSH_BODY = 'You have a new message.'
 
 # Finalized message bank (Eliana Bacal REACT_IRB01_Message_Bank_v1.docx,
 # delivered 2026-09-06), columns: ID, Trigger, Technique, Message, Length,
@@ -41,6 +44,17 @@ def _load_catalog(path: Path) -> list[dict]:
                 'context': row['Context'].strip().lower(),
             })
     return catalog
+
+
+# The message text itself is never stored with a decision or sent in a push;
+# it only feeds the app's bundled copy (manage.py dump_prompt_messages).
+def load_prompt_messages(path: Path = _CATALOG_PATH) -> dict[str, str]:
+    with open(path, newline='', encoding='utf-8') as f:
+        return {
+            row['ID'].strip(): row['Message shown to participant'].strip()
+            for row in csv.DictReader(f)
+            if row['ID'].strip()
+        }
 
 
 _CATALOG = _load_catalog(_CATALOG_PATH)
@@ -227,13 +241,21 @@ def receipt_error_code(receipt) -> str:
 
 
 def build_jitai_push_message(user, jitai_log) -> PushMessage:
+    data = {
+        'type': 'ema_prompt',
+        'prompt_id': jitai_log.prompt_id,
+        'jitai_log_id': jitai_log.pk,
+    }
+    if not settings.JITAI_VISIBLE_PUSH:
+        return PushMessage(to=user.push_token, data=data)
+    # The visible title/body are fixed and neutral, the same for every arm and
+    # message, so no intervention text transits Expo/APNs/FCM. The app looks
+    # prompt_id up in its bundled copy of the message bank and shows the text.
     return PushMessage(
         to=user.push_token,
-        data={
-            'type': 'ema_prompt',
-            'prompt_id': jitai_log.prompt_id,
-            'jitai_log_id': jitai_log.pk,
-        },
+        title=JITAI_PUSH_TITLE,
+        body=JITAI_PUSH_BODY,
+        data=data,
     )
 
 
