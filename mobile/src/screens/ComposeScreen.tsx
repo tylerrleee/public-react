@@ -11,6 +11,7 @@ import {
 import * as Notifications from 'expo-notifications';
 import ComposeInput from '../components/ComposeInput';
 import SupportResourceCard from '../components/SupportResourceCard';
+import SupportResourcesScreen from './SupportResourcesScreen';
 import { emitDraftDeleted, emitDraftSubmitted } from '../telemetry/composeTelemetry';
 import { useTelemetryStore, TelemetryEvent } from '../telemetry/telemetryStore';
 import { useAuthStore } from '../store/authStore';
@@ -30,6 +31,7 @@ type Props = {
 
 export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinError, onRefreshCheckin, resourceCard }: Props) {
   const [text, setText] = useState('');
+  const [supportResourcesOpen, setSupportResourcesOpen] = useState(false);
   const events = useTelemetryStore((s) => s.events);
   const flush = useTelemetryStore((s) => s.flush);
   const logout = useAuthStore((s) => s.logout);
@@ -106,6 +108,7 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
   }
 
   return (
+    <>
     <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
     <View style={styles.container}>
       <ScrollView
@@ -187,17 +190,26 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
         )}
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={styles.footer} accessibilityRole="toolbar" accessibilityLabel="App menu">
         <TouchableOpacity
-          style={styles.logoutBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+          accessibilityRole="button"
+          style={styles.menuItem}
+          onPress={() => { Keyboard.dismiss(); setSupportResourcesOpen(true); }}
+        >
+          <Text style={styles.menuItemText}>Support resources</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={styles.menuItem}
           onPress={() => { flush(); logout(); }}
         >
-          <Text style={styles.logoutBtnText}>Log out</Text>
+          <Text style={styles.menuItemText}>Log out</Text>
         </TouchableOpacity>
       </View>
     </View>
     </TouchableWithoutFeedback>
+    {supportResourcesOpen && <SupportResourcesScreen onClose={() => setSupportResourcesOpen(false)} />}
+    </>
   );
 }
 
@@ -265,17 +277,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: '#eee',
     paddingTop: 10,
     paddingBottom: 56,
   },
-  logoutBtn: {
-    paddingVertical: 4,
+  menuItem: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingVertical: 12,
     paddingHorizontal: 16,
   },
-  logoutBtnText: {
+  menuItemText: {
     color: colors.primary,
     fontSize: 13,
     fontWeight: '600',

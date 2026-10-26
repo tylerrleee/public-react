@@ -6317,3 +6317,13 @@ class PromptMessagesAppCopyTests(SimpleTestCase):
         for prompt in _EMA_CATALOG + _CONTROL_CATALOG:
             with self.subTest(prompt_id=prompt['id']):
                 self.assertTrue(bundled.get(prompt['id']))
+
+
+class SupportResourcesAppCopyTests(SimpleTestCase):
+    def test_offline_menu_resources_match_the_backend_card(self):
+        from django.conf import settings
+        from app.distress import resource_card
+
+        path = settings.BASE_DIR.parent / 'mobile' / 'src' / 'resources' / 'support.json'
+        bundled = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(bundled, resource_card())
