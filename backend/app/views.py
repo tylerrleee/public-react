@@ -4,6 +4,7 @@ from datetime import timedelta
 from dashboard.data.config import OUTCOME_CHECK_IN_DELAY_MINUTES, OUTCOME_WINDOW_HOURS, PARTICIPANT_TZ
 from dashboard.data.windows import participant_day_bounds
 from dashboard.serializers import participant_label
+from .decision_log import apply_engagement, record_c0
 from .distress import active_distress_flag, raise_momentary_flag, resource_card_state
 from django.contrib.auth.models import User as AuthUser
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -940,6 +941,7 @@ class EMAResponseView(APIView):
             for item in data['responses']
         ]
         EMAItemResponse.objects.bulk_create(responses)
+        record_c0(ema)
 
         raise_momentary_flag(ema)
         payload = dict(EMASerializer(ema).data)
@@ -1294,4 +1296,5 @@ class EngagementLogView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         log = serializer.save(user=app_user)
+        apply_engagement(log)
         return Response(EngagementLogSerializer(log).data, status=status.HTTP_201_CREATED)

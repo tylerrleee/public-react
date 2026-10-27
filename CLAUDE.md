@@ -102,7 +102,11 @@ streamlit run monitor_app/app.py       # entry; pages appear in the sidebar
 python manage.py recompute_metrics                 # what the periodic task does: trailing 3 days
 python manage.py recompute_metrics --all           # initial fill / after a definition change
 python manage.py recompute_metrics --user 12 --days 2
-python manage.py dump_item_bank --check            # fails if EMA_ITEM_BANK drifted from the frozen JSON
+python manage.py dump_item_bank --check            # fails if EMA_ITEM_BANK drifted from the frozen JSON (also in CI)
+python manage.py backfill_decision_log --dry-run   # copy opens/C0 onto older JITAILog rows, link card events
+python manage.py export_decision_log --sent-only --limit 10 --out rows.csv
+                                                   # one CSV row per decision_point_id: decision, open
+                                                   #   time/via, C0 rating/time, every resource-card display
 python manage.py backfill_withdrawals --dry-run    # backdate withdrawals from django_admin_log
 python manage.py backfill_thresholds --dry-run     # fill JITAILog.threshold_at_decision on
                                                    #   rows written before the engine kept it
@@ -219,9 +223,10 @@ docs/superpowers/  # schema design specs/plans from the original REACT model bui
 ## Schema authority
 
 The **Django Models** section below is a simplified design reference and is intentionally leaner than
-what is deployed. The live schema is richer — e.g. `JITAILog` has **37** columns (the message-arm
+what is deployed. The live schema is richer — e.g. `JITAILog` has **51** columns (the message-arm
 randomization and routing audit landed in migrations `0042`–`0043`, and
-`threshold_at_decision` / `threshold_source` in `0046`, and `distress_flag_active` in `0054`); `User` carries `study_id` (migration
+`threshold_at_decision` / `threshold_source` in `0046`, `distress_flag_active` in `0054`, `push_visible` in `0057`, and the
+outcome fields `opened_at`/`opened_via`/`c0_helpful`/`c0_responded_at` in `0058`); `User` carries `study_id` (migration
 `0051`, see the baseline-import section below) and `schedule_restarted_at` (`0055`: set when staff restart a
 participant's schedule by moving `enrolled_at`; records before it are pre-restart, kept, and logged in `docs/CHANGELOG.md`); `EMA` carries `ema_type`,
 outcome-window fields, `served_sub_item_ids`, `app_version`/`app_build` (`0056`) and `app_platform` (`0057`); there are additional tables (`EMAItemResponse`,
@@ -575,6 +580,18 @@ which way each send went. The app logs an `EngagementLog` `prompt_message_shown`
 `jitai_log`, when it renders the message text. Set the minimums to the build numbers EAS
 actually assigns to the first message-bank binaries, and only after the test on physical phones
 passes.
+
+**Decision-row outcome (migration `0058`, requested by Dr. Chang for Nov 6).** Each `JITAILog` row
+carries what happened after it, copied from the raw events by `backend/app/decision_log.py`:
+`opened_at` / `opened_via` (the earliest `notification_tapped` = `notification_tap`, or
+`prompt_message_shown` = `in_app`, for a sent prompt) and `c0_helpful` / `c0_responded_at` (blank
+when C0 was dismissed or never shown). Resource-card `EngagementLog` events get `jitai_log`: a
+check-in card links to the decision made on that check-in (set on arrival, or by
+`link_checkin_cards_to` when Celery writes the decision a few minutes later), and a home-screen
+card links to the participant's latest decision at or before it was shown. The raw events stay
+the record; these columns are a convenience, refilled by `manage.py backfill_decision_log` through
+the same functions. `manage.py export_decision_log` writes one row per `decision_point_id`,
+labelled by study ID, with no email or message text.
 
 **Analysis rule (Dr. Chang, 2026-10-26).** All data is kept. A participant's message delivery
 starts at their first `prompt_message_shown` event. Decision points before it stay in the
