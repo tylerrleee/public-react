@@ -92,7 +92,8 @@ export const telemetry = {
       | 'ema_dismissed'
       | 'ema_completed'
       | 'resource_card_shown_checkin'
-      | 'resource_card_shown_home';
+      | 'resource_card_shown_home'
+      | 'prompt_message_shown';
     occurred_at: string;
     jitai_log?: number;
     ema?: number;

@@ -16,6 +16,7 @@ from exponent_server_sdk import (
 )
 
 from app.ema_catalog import ROUTING_SUB_ITEM_IDS, ROUTING_TRIGGER_RULES
+from app.models import EMA
 
 logger = logging.getLogger(__name__)
 EXPO_PUSH_TOKEN_PREFIXES = ('ExponentPushToken[', 'ExpoPushToken[')
@@ -240,13 +241,40 @@ def receipt_error_code(receipt) -> str:
     return str(details.get('error') or 'unknown')[:64]
 
 
-def build_jitai_push_message(user, jitai_log) -> PushMessage:
+def reported_app_build(user) -> tuple[str, int] | None:
+    latest = (
+        EMA.objects
+        .filter(user=user)
+        .exclude(app_build='')
+        .order_by('-sent_at')
+        .values_list('app_platform', 'app_build')
+        .first()
+    )
+    if not latest or not latest[0] or not latest[1].isdigit():
+        return None
+    return latest[0], int(latest[1])
+
+
+# Per participant, not global: only someone whose app has reported a build that
+# bundles the message bank gets a notification they can actually open.
+def wants_visible_push(user) -> bool:
+    min_builds = settings.JITAI_VISIBLE_PUSH_MIN_BUILDS
+    if not min_builds:
+        return False
+    reported = reported_app_build(user)
+    if reported is None:
+        return False
+    platform, build = reported
+    return platform in min_builds and build >= min_builds[platform]
+
+
+def build_jitai_push_message(user, jitai_log, visible: bool = False) -> PushMessage:
     data = {
         'type': 'ema_prompt',
         'prompt_id': jitai_log.prompt_id,
         'jitai_log_id': jitai_log.pk,
     }
-    if not settings.JITAI_VISIBLE_PUSH:
+    if not visible:
         return PushMessage(to=user.push_token, data=data)
     # The visible title/body are fixed and neutral, the same for every arm and
     # message, so no intervention text transits Expo/APNs/FCM. The app looks
@@ -277,7 +305,10 @@ def send_jitai_prompt(user, jitai_log) -> bool:
         mark_delivery_failed(jitai_log, 'invalid Expo push token')
         return False
 
-    message = build_jitai_push_message(user, jitai_log)
+    visible = wants_visible_push(user)
+    jitai_log.push_visible = visible
+    jitai_log.save(update_fields=['push_visible'])
+    message = build_jitai_push_message(user, jitai_log, visible)
 
     for attempt in range(2):
         try:

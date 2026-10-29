@@ -67,7 +67,7 @@ Two push types exist.
 
 The app needs no special handling: `GET /ema/next/` decides what to serve, including `should_show: false` with `reason: "outcome_window_pending"` during the first 60 minutes of a window.
 
-**JITAI prompt** (visible, neutral): title `REACT`, body `You have a new message.`, the same for every message and arm. Sent visible only when the backend has `JITAI_VISIBLE_PUSH=true`; otherwise it is data-only and shows nothing unless the app is open. Data is `{ type: "ema_prompt", prompt_id, jitai_log_id }`. Not on a clock. `evaluate_jitai_triggers` also runs every 180 seconds, but it only considers sending after a new completed EMA, then eligibility plus a coin flip. Tapping it (or receiving it with the app open) opens the C0 rating; `/ema/next/` returns `message_prompt_id`, and the app shows that message's text from `src/prompts/messages.json`, its bundled copy of the approved bank, above the rating. The text never travels in the push. Regenerate the file with `python manage.py dump_prompt_messages` (from `backend/`) whenever `REACTprompts.csv` changes; a backend test fails until you do.
+**JITAI prompt** (visible, neutral): title `REACT`, body `You have a new message.`, the same for every message and arm. Sent visible only to a participant whose latest check-in reported `app_platform` and an `app_build` at or above that platform's minimum in the backend's `JITAI_VISIBLE_PUSH_MIN_BUILDS` (e.g. `ios:11,android:13`, set to the numbers EAS assigns to the first message-bank builds); everyone else gets it data-only, which shows nothing unless the app is open. When the message renders, the app logs a `prompt_message_shown` engagement event linked to the decision. Data is `{ type: "ema_prompt", prompt_id, jitai_log_id }`. Not on a clock. `evaluate_jitai_triggers` also runs every 180 seconds, but it only considers sending after a new completed EMA, then eligibility plus a coin flip. Tapping it (or receiving it with the app open) opens the C0 rating; `/ema/next/` returns `message_prompt_id`, and the app shows that message's text from `src/prompts/messages.json`, its bundled copy of the approved bank, above the rating. The text never travels in the push. Regenerate the file with `python manage.py dump_prompt_messages` (from `backend/`) whenever `REACTprompts.csv` changes; a backend test fails until you do.
 
 The home screen checks `GET /ema/next/?checkin_only=1` after sign-in, on return to the foreground, and after closing a survey. An available check-in appears in a card with a **Start check-in** button and its closing time. The card disappears at expiry or after completion. Failed availability requests show a retry button. The card and check-in reminder opens use `checkin_only=1` to skip unanswered C0 feedback. C0 feedback opens through intervention notifications using the default endpoint; it has no home-screen card.
 
@@ -103,6 +103,22 @@ Repeat on an iPhone test account and an Android test account against the updated
 4. With backend staff, verify an otherwise eligible coping-prompt decision is suppressed with the distress reason, and scheduled reminders/check-ins, existing outcome check-ins and quick ratings remain available under their normal eligibility rules. Check resource content never appears in a notification.
 5. On test data, verify the card clears when the last momentary flag expires, stays through overlapping flags, and stays for a suppressing baseline flag until staff document contact. After staff clear the baseline flag, foreground the app or wait for the next Home refresh.
 6. Log out and use a different account; the previous account's card must not carry over.
+
+### Support resources menu
+
+The fixed Home header includes a **Support resources** button with a help icon. It remains visible while scrolling; **Log out** stays separately in the footer. The button opens a scrollable screen with the same seven resources and call buttons used by the flagged-check-in card. **Done** or Android Back returns to Home and preserves the compose draft. Resources are available to every signed-in participant, even without a check-in or distress flag, and work offline after a fresh launch.
+
+The menu bundles `src/resources/support.json`, an exact copy of `app.distress.resource_card()`. The backend test `app.tests.SupportResourcesAppCopyTests` checks for drift. When the backend wording changes, regenerate this file from `backend/` and include it in the next mobile build:
+
+```bash
+python manage.py shell -c 'import json; from pathlib import Path; from django.conf import settings; from app.distress import resource_card; (settings.BASE_DIR.parent / "mobile/src/resources/support.json").write_text(json.dumps(resource_card(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")'
+```
+
+Automatic Home and post-check-in cards retain their existing flag-driven behavior and engagement events. Opening the menu does not create a distress flag or report an automatic card-display event.
+
+For device QA, use an account without a distress flag or an available check-in. Confirm the **Support resources** header button stays visible when scrolling Home, then open it, scroll through all seven entries, and verify a call button opens the dialer. Return using **Done**, reopen, and verify Android Back also closes the screen. Repeat after a cold launch in airplane mode, and confirm an existing compose draft survives opening and closing resources. With an active flag, verify the automatic card and check-in flow still work independently.
+
+This update also removes notification engagement debug toasts. The committed build numbers are iOS **11** and Android **13** (app version `1.0.0`). Production EAS builds use remote versioning and auto-increment, so verify the assigned numbers on the resulting binaries before checking `EMA.app_build`.
 
 ## Local backend
 
@@ -192,10 +208,6 @@ CI (`.github/workflows/django-ci.yml`) runs Django tests only. It does not build
 
 - Push token registration skips simulators (`Device.isDevice`).
 - Register/login does not set `is_enrolled` or create a wearable.
-<<<<<<< HEAD
-- The 9–21 reminder window is a placeholder.
-=======
 - The 9–21 reminder window is a placeholder. The 60-minute outcome check-in lag (`OUTCOME_CHECK_IN_DELAY_MINUTES`) is provisional, pending PI sign-off.
->>>>>>> d5b42348f3167253ece23d9c4b62604f438c17fb
 
 `../Resources/REACT_Mobile_App_Gaps.docx` is older than this branch. EMA UI, auth refresh, and tap receipts are already implemented.

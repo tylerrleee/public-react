@@ -104,7 +104,11 @@ streamlit run monitor_app/app.py       # entry; pages appear in the sidebar
 python manage.py recompute_metrics                 # what the periodic task does: trailing 3 days
 python manage.py recompute_metrics --all           # initial fill / after a definition change
 python manage.py recompute_metrics --user 12 --days 2
-python manage.py dump_item_bank --check            # fails if EMA_ITEM_BANK drifted from the frozen JSON
+python manage.py dump_item_bank --check            # fails if EMA_ITEM_BANK drifted from the frozen JSON (also in CI)
+python manage.py backfill_decision_log --dry-run   # copy opens/C0 onto older JITAILog rows, link card events
+python manage.py export_decision_log --sent-only --limit 10 --out rows.csv
+                                                   # one CSV row per decision_point_id: decision, open
+                                                   #   time/via, C0 rating/time, every resource-card display
 python manage.py backfill_withdrawals --dry-run    # backdate withdrawals from django_admin_log
 python manage.py backfill_thresholds --dry-run     # fill JITAILog.threshold_at_decision on
                                                    #   rows written before the engine kept it
@@ -169,7 +173,7 @@ that key is accepted for.
 `settings.py` is fully env-driven and picks the database by environment: `DATABASE_URL`
 (Heroku/dj-database-url) → Cloud SQL when `K_SERVICE` is set (GCP) → discrete `DATABASE_*` vars. Key
 env vars: `SECRET_KEY`, `API_KEY`, `DASHBOARD_API_KEY`, `REDIS_URL`, `SENTRY_DSN`,
-`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH` (default off — sends the JITAI push with its neutral title/body; turn on only once every participant runs a build that bundles `messages.json`).
+`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH_MIN_BUILDS` (e.g. `ios:11,android:13`; unset = no visible JITAI push for anyone; when set, only participants whose latest check-in reported `EMA.app_platform` plus an `EMA.app_build` at or above that platform's minimum get the neutral title/body).
 
 Two push types reach the device (details in `mobile/README.md`): a **visible check-in reminder**
 (`send_checkin_reminders`, which divides 9–21 participant-local time into six fixed two-hour
@@ -235,12 +239,13 @@ docs/superpowers/  # schema design specs/plans from the original REACT model bui
 ## Schema authority
 
 The **Django Models** section below is a simplified design reference and is intentionally leaner than
-what is deployed. The live schema is richer — e.g. `JITAILog` has **37** columns (the message-arm
+what is deployed. The live schema is richer — e.g. `JITAILog` has **51** columns (the message-arm
 randomization and routing audit landed in migrations `0042`–`0043`, and
-`threshold_at_decision` / `threshold_source` in `0046`, and `distress_flag_active` in `0054`); `User` carries `study_id` (migration
+`threshold_at_decision` / `threshold_source` in `0046`, `distress_flag_active` in `0054`, `push_visible` in `0057`, and the
+outcome fields `opened_at`/`opened_via`/`c0_helpful`/`c0_responded_at` in `0058`); `User` carries `study_id` (migration
 `0051`, see the baseline-import section below) and `schedule_restarted_at` (`0055`: set when staff restart a
 participant's schedule by moving `enrolled_at`; records before it are pre-restart, kept, and logged in `docs/CHANGELOG.md`); `EMA` carries `ema_type`,
-outcome-window fields, `served_sub_item_ids` and `app_version`/`app_build` (`0056`); there are additional tables (`EMAItemResponse`,
+outcome-window fields, `served_sub_item_ids`, `app_version`/`app_build` (`0056`) and `app_platform` (`0057`); there are additional tables (`EMAItemResponse`,
 `EngagementLog`, `PhoneTelemetry`, `EventDay`, `CheckinReminder`, `WearableSync`, `DistressFlag`); and four derived
 `dashboard_*` monitoring tables. For the actual deployed schema,
 trust `backend/app/models.py` and `analytics/analysis-resources/production_schema.md` (the latter maps every
@@ -576,7 +581,39 @@ Until 2026-10-26 the push had no title or body and the app had no bank, so no JI
 ever displayed (production: 41 sent from 2026-09-30, 1 reached the app, 0 opened from a
 notification). `messages.json` is generated from `backend/app/data/REACTprompts.csv` by
 `manage.py dump_prompt_messages`; `--check` (also a test) fails when the CSV changes without the
-app copy, and a bank change needs a new app build. The visible title/body are sent only when `JITAI_VISIBLE_PUSH=true`; with it off the push stays data-only, as before.
+app copy, and a bank change needs a new app build.
+
+The visible title/body are gated **per participant**, as Dr. Chang required (2026-10-26): only
+when `JITAI_VISIBLE_PUSH_MIN_BUILDS` is set and that participant's latest check-in reported an
+`EMA.app_platform` and an `EMA.app_build` at or above that platform's minimum
+(`wants_visible_push` in `notification_service.py`). Build numbers differ by platform (iOS and
+Android are numbered separately, and EAS remote versioning auto-increments them), so one number
+cannot gate both. `EMA.app_platform` (migration `0057`) is sent only by builds that also carry
+the message bank, so an older build (blank platform, e.g. the build 10 already in the field)
+never qualifies, whatever its number. Everyone not qualifying still gets the data-only push, so
+no one gets a notification that opens nothing. `JITAILog.push_visible` (also `0057`) records
+which way each send went. The app logs an `EngagementLog` `prompt_message_shown` event, linked by
+`jitai_log`, when it renders the message text. Set the minimums to the build numbers EAS
+actually assigns to the first message-bank binaries, and only after the test on physical phones
+passes.
+
+**Decision-row outcome (migration `0058`, requested by Dr. Chang for Nov 6).** Each `JITAILog` row
+carries what happened after it, copied from the raw events by `backend/app/decision_log.py`:
+`opened_at` / `opened_via` (the earliest `notification_tapped` = `notification_tap`, or
+`prompt_message_shown` = `in_app`, for a sent prompt) and `c0_helpful` / `c0_responded_at` (blank
+when C0 was dismissed or never shown). Resource-card `EngagementLog` events get `jitai_log`: a
+check-in card links to the decision made on that check-in (set on arrival, or by
+`link_checkin_cards_to` when Celery writes the decision a few minutes later), and a home-screen
+card links to the participant's latest decision at or before it was shown. The raw events stay
+the record; these columns are a convenience, refilled by `manage.py backfill_decision_log` through
+the same functions. `manage.py export_decision_log` writes one row per `decision_point_id`,
+labelled by study ID, with no email or message text.
+
+**Analysis rule (Dr. Chang, 2026-10-26).** All data is kept. A participant's message delivery
+starts at their first `prompt_message_shown` event. Decision points before it stay in the
+dataset but are excluded from any analysis of message effects or engagement, and so are the C0
+ratings from before it, since some were given with no message on screen. Check-ins, the MSSD
+detector, randomization, distress flags and wearable data from that period stay usable.
 
 Expo push token is stored in `User.push_token` and updated on app launch.
 

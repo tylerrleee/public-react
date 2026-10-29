@@ -59,6 +59,11 @@ jobs:
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 
+      - name: Check frozen catalogs match their sources
+        run: |
+          python manage.py dump_item_bank --check
+          python manage.py dump_prompt_messages --check
+
       - name: Run tests
         run: python manage.py test
 

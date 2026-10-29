@@ -91,7 +91,7 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
     visibleItems.length > 0 && visibleItems.every((sub) => isAnswered(answers[sub.sub_item_id]));
 
   const logEngagement = useCallback(
-    (event_type: 'ema_opened' | 'ema_dismissed' | 'ema_completed', logId?: number | null) => {
+    (event_type: 'ema_opened' | 'ema_dismissed' | 'ema_completed' | 'prompt_message_shown', logId?: number | null) => {
       if (!userId) return;
       const linked = logId ?? jitaiLogId;
       telemetry
@@ -150,6 +150,10 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
 
       setPhase('form');
       logEngagement('ema_opened', data.jitai_log_id);
+      // The first of these per participant is where their message delivery starts.
+      if (data.ema_type === 'prompt_feedback' && promptMessage(data.message_prompt_id)) {
+        logEngagement('prompt_message_shown', data.jitai_log_id);
+      }
     } catch (e: any) {
       log('[EMA] next failed:', e?.response?.status, e?.response?.data ?? e?.message);
       setPhase('error');
@@ -225,6 +229,7 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
         outcome_window_end: survey.outcome_window_end ?? null,
         app_version: Application.nativeApplicationVersion,
         app_build: Application.nativeBuildVersion,
+        app_platform: Platform.OS,
         responses: visibleItems.map((sub) => ({
           sub_item_id: sub.sub_item_id,
           value: answers[sub.sub_item_id],

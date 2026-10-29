@@ -274,9 +274,11 @@ def load_ema(
         pd.DataFrame with columns matching app_ema:
             id, user_id, prompt_id, sent_at, responded_at, status, ema_type,
             source_jitai_log_id, outcome_window_start, outcome_window_end,
-            expires_at, app_version, app_build, mood, stress, energy.
+            expires_at, app_version, app_build, app_platform, mood, stress,
+            energy.
         One row per EMA prompt. Timestamps are timezone-aware (UTC).
-        app_version/app_build are blank for builds that did not send them.
+        app_version/app_build/app_platform are blank for builds that did not
+        send them.
 
     Example:
         load_ema(user_id=42, start_date=date(2026,9,1))
@@ -298,6 +300,7 @@ def load_ema(
             "id", "user_id", "prompt_id", "sent_at", "responded_at", "status",
             "ema_type", "source_jitai_log_id", "outcome_window_start",
             "outcome_window_end", "expires_at", "app_version", "app_build",
+            "app_platform",
             "mood", "stress", "energy",
         )
     )
@@ -334,7 +337,11 @@ def load_jitai_log(
             receipt_platform, receipt_app_state, delivery_error,
             suppression_reason ('' for a decision the engine evaluated normally;
             run_in / distress_baseline / distress_momentary for one held back
-            on purpose).
+            on purpose), push_visible (True when the push carried the visible
+            title/body; False before the message bank shipped and for anyone
+            not yet on that build), opened_at/opened_via (earliest notification
+            tap or in-app message display), c0_helpful/c0_responded_at (blank
+            when no C0 rating was given).
         One row per decision point. Timestamps are timezone-aware (UTC).
 
     Example:
@@ -361,14 +368,54 @@ def load_jitai_log(
             "ema_energy", "status", "delivery_status", "push_sent_at",
             "device_received_at", "receipt_reported_at", "receipt_platform",
             "receipt_app_state", "delivery_error", "suppression_reason",
-            "distress_flag_active",
+            "distress_flag_active", "push_visible", "opened_at", "opened_via",
+            "c0_helpful", "c0_responded_at",
         )
     )
     return _to_utc(
         df,
         ["triggered_at", "decision_made_at", "push_sent_at",
-         "device_received_at", "receipt_reported_at"],
+         "device_received_at", "receipt_reported_at", "opened_at",
+         "c0_responded_at"],
     )
+
+
+def load_delivery_start() -> pd.DataFrame:
+    """
+    Purpose:
+        Each participant's message-delivery start: the first time the app
+        rendered a JITAI message for them. Per Dr. Chang (2026-10-26),
+        decision points and C0 ratings before it are kept in the dataset but
+        excluded from any analysis of message effects or engagement.
+
+    Inputs:
+        None.
+
+    Outputs:
+        pd.DataFrame with columns user_id, delivery_start (timezone-aware
+        UTC). One row per participant who has seen at least one message;
+        anyone absent has not started delivery.
+
+    Example:
+        starts = load_delivery_start()
+        log = load_jitai_log().merge(starts, on="user_id", how="left")
+        analyzable = log[log["decision_made_at"] >= log["delivery_start"]]
+    Source of data:
+        app_engagementlog rows with event_type 'prompt_message_shown'.
+    """
+    _ensure_django()
+    from django.db.models import Min
+    from app.models import EngagementLog
+
+    df = pd.DataFrame(
+        EngagementLog.objects
+        .filter(event_type="prompt_message_shown")
+        .values("user_id")
+        .annotate(delivery_start=Min("occurred_at"))
+        .values("user_id", "delivery_start"),
+        columns=["user_id", "delivery_start"],
+    )
+    return _to_utc(df, ["delivery_start"])
 
 
 def load_heart_rate(
@@ -460,7 +507,7 @@ def load_engagement_log(
     Purpose:
         Load user engagement events (EMA opened/dismissed/completed,
         notification tapped/dismissed, resource card shown after a check-in
-        or on home) from app_engagementlog.
+        or on home, JITAI message shown) from app_engagementlog.
 
     Inputs:
         user_id    - int or None. If None, returns records for all participants.

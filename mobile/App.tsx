@@ -173,9 +173,8 @@ export default function App() {
         occurred_at: new Date().toISOString(),
         ...(parsed.jitaiLogId !== undefined && { jitai_log: parsed.jitaiLogId }),
       }).then(() => {
-        showToast('✅ Engagement logged to backend');
+        log('[Push] Engagement logged to backend');
       }).catch((e) => {
-        showToast(`❌ Engagement log failed: ${e?.response?.status ?? 'Network error'}`);
         log('[Push] Engagement log failed:', e?.response?.status);
       });
 

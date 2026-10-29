@@ -99,12 +99,12 @@ class EMASerializer(serializers.ModelSerializer):
             'id', 'user', 'prompt_id', 'sent_at', 'responded_at', 'status',
             'ema_type', 'source_jitai_log', 'outcome_window_start',
             'outcome_window_end', 'expires_at', 'served_sub_item_ids',
-            'app_version', 'app_build',
+            'app_version', 'app_build', 'app_platform',
             'mood', 'stress', 'energy', 'item_responses',
         ]
         read_only_fields = (
             'id', 'sent_at', 'user', 'responded_at', 'status', 'expires_at',
-            'served_sub_item_ids', 'app_version', 'app_build',
+            'served_sub_item_ids', 'app_version', 'app_build', 'app_platform',
         )
         extra_kwargs = {
             'mood':   {'min_value': 1, 'max_value': 7},
@@ -129,9 +129,11 @@ class JITAILogSerializer(serializers.ModelSerializer):
             'trigger_signal', 'ema_mood', 'ema_stress', 'ema_energy',
             'eligible_prompt_ids', 'evaluated_items', 'matched_categories',
             'category_drawn', 'fallback_reason', 'suppression_reason', 'distress_flag_active',
+            'push_visible', 'opened_at', 'opened_via', 'c0_helpful', 'c0_responded_at',
         ]
         read_only_fields = (
             'id', 'triggered_at', 'suppression_reason', 'distress_flag_active',
+            'push_visible', 'opened_at', 'opened_via', 'c0_helpful', 'c0_responded_at',
             'expo_ticket_id', 'expo_receipt_status', 'expo_receipt_error', 'expo_receipt_checked_at',
         )
 
@@ -300,6 +302,7 @@ class EMAResponseSubmitSerializer(serializers.Serializer):
     outcome_window_end = serializers.DateTimeField(required=False, allow_null=True)
     app_version = serializers.CharField(max_length=32, required=False, allow_blank=True, allow_null=True)
     app_build = serializers.CharField(max_length=32, required=False, allow_blank=True, allow_null=True)
+    app_platform = serializers.CharField(max_length=16, required=False, allow_blank=True, allow_null=True)
     # What the client was actually shown, echoed back from /ema/next/. Optional:
     # the server recomputes the same set when a client does not send it.
     served_sub_item_ids = serializers.ListField(

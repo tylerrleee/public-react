@@ -20,6 +20,7 @@ from app.notification_service import (
     send_checkin_reminder,
     send_jitai_prompt,
 )
+from app.decision_log import link_checkin_cards_to
 from app.distress import active_distress_flag
 from app.ema_catalog import POST_PROMPT_CHECK_IN_DAILY_CAP
 from app.views import _latest_outcome_window, _today_post_prompt_count, _today_scheduled_check_in_count
@@ -385,6 +386,8 @@ def _evaluate_user(user, p):
 
     if not created:
         return
+
+    link_checkin_cards_to(jitai_log)
 
     if send_prompt:
         if user.push_token:
