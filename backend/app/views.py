@@ -4,7 +4,7 @@ from datetime import timedelta
 from dashboard.data.config import OUTCOME_CHECK_IN_DELAY_MINUTES, OUTCOME_WINDOW_HOURS, PARTICIPANT_TZ
 from dashboard.data.windows import participant_day_bounds
 from dashboard.serializers import participant_label
-from .distress import active_distress_flag, raise_momentary_flag, resource_card
+from .distress import active_distress_flag, raise_momentary_flag, resource_card_state
 from django.contrib.auth.models import User as AuthUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.shortcuts import render
@@ -720,6 +720,13 @@ class EMANextView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        response = self._get(request)
+        if response.status_code == status.HTTP_200_OK:
+            app_user = _get_app_user(request)
+            response.data.update(resource_card_state(app_user))
+        return response
+
+    def _get(self, request):
         app_user = _get_app_user(request)
         if app_user is None:
             return Response({"error": "User not found."}, status=status.HTTP_403_FORBIDDEN)
@@ -737,6 +744,7 @@ class EMANextView(APIView):
                 'prompt_id': f'EMA-C0-{feedback_jitai.id}',
                 'ema_type': 'prompt_feedback',
                 'jitai_log_id': feedback_jitai.id,
+                'message_prompt_id': feedback_jitai.prompt_id,
                 'outcome_window_active': False,
                 'items': feedback_items,
                 'served_sub_item_ids': _served_sub_item_ids(feedback_items),
@@ -914,6 +922,8 @@ class EMAResponseView(APIView):
             outcome_window_end=data.get('outcome_window_end'),
             expires_at=reminder.expires_at if reminder else now + timedelta(minutes=EMA_RESPONSE_WINDOW_MINUTES),
             served_sub_item_ids=served,
+            app_version=data.get('app_version') or '',
+            app_build=data.get('app_build') or '',
         )
 
         responses = [
@@ -932,7 +942,7 @@ class EMAResponseView(APIView):
 
         raise_momentary_flag(ema)
         payload = dict(EMASerializer(ema).data)
-        payload['resource_card'] = resource_card() if active_distress_flag(app_user) else None
+        payload.update(resource_card_state(app_user))
 
         return Response(payload, status=status.HTTP_201_CREATED)
 
@@ -954,6 +964,9 @@ class JITAILogView(APIView):
 
         eligible, suppression_reason = _decision_point_safeguards(
             serializer.validated_data['user'], django_timezone.now(),
+        )
+        serializer.validated_data['distress_flag_active'] = (
+            active_distress_flag(serializer.validated_data['user']) is not None
         )
         if not eligible:
             serializer.validated_data.update({
@@ -1276,7 +1289,7 @@ class EngagementLogView(APIView):
         app_user = _get_app_user(request)
         if app_user is None:
             return Response({"error": "User not found."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = EngagementLogSerializer(data=request.data)
+        serializer = EngagementLogSerializer(data=request.data, context={'user': app_user})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         log = serializer.save(user=app_user)

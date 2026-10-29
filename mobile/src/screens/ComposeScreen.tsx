@@ -11,17 +11,22 @@ import {
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import ComposeInput from '../components/ComposeInput';
+<<<<<<< HEAD
 import {
   emitDraftDeleted,
   emitDraftSubmitted,
   endComposeVisit,
   onComposeAppStateChange,
 } from '../telemetry/composeTelemetry';
+=======
+import SupportResourceCard from '../components/SupportResourceCard';
+import { emitDraftDeleted, emitDraftSubmitted } from '../telemetry/composeTelemetry';
+>>>>>>> 533463162c97322422e0115122abb03a96bf55a9
 import { useTelemetryStore, TelemetryEvent } from '../telemetry/telemetryStore';
 import { useAuthStore } from '../store/authStore';
 import { useAlertStore } from '../store/alertStore';
-import { jitai } from '../api/endpoints';
-import { EMANextShowResponse } from '../api/types';
+import { jitai, telemetry } from '../api/endpoints';
+import { EMANextShowResponse, ResourceCard } from '../api/types';
 import { log } from '../utils/logger';
 import { colors, radius } from '../theme';
 
@@ -30,9 +35,10 @@ type Props = {
   availableCheckin: EMANextShowResponse | null;
   checkinError: boolean;
   onRefreshCheckin: () => void;
+  resourceCard: ResourceCard | null;
 };
 
-export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinError, onRefreshCheckin }: Props) {
+export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinError, onRefreshCheckin, resourceCard }: Props) {
   const [text, setText] = useState('');
   const events = useTelemetryStore((s) => s.events);
   const flush = useTelemetryStore((s) => s.flush);
@@ -49,6 +55,15 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
 
   const devNote = __DEV__ ? ' Check the console for telemetry.' : '';
   const userId = useAuthStore((s) => s.userId);
+
+  function logResourceCardShown() {
+    if (!userId) return;
+    telemetry
+      .logEngagement({ event_type: 'resource_card_shown_home', occurred_at: new Date().toISOString() })
+      .catch((e) => {
+        log('[Home] resource_card_shown_home log failed:', e?.response?.status ?? e?.message);
+      });
+  }
 
   async function simulateJitaiPush() {
     if (!userId) return;
@@ -155,6 +170,12 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
           </View>
         )}
 
+        {resourceCard && (
+          <View style={styles.resourceCard}>
+            <SupportResourceCard card={resourceCard} onShown={logResourceCardShown} />
+          </View>
+        )}
+
         <Text style={styles.title}>Compose</Text>
         <View style={styles.titleAccent} />
         <ComposeInput value={text} onChangeText={setText} onSubmit={handleSubmit} />
@@ -199,6 +220,10 @@ export default function ComposeScreen({ onOpenEMA, availableCheckin, checkinErro
 }
 
 const styles = StyleSheet.create({
+  resourceCard: {
+    margin: 16, padding: 16, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.primaryBorder,
+  },
   checkinCard: {
     margin: 16, padding: 16, borderRadius: 12,
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.primary,

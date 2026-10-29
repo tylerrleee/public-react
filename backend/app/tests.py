@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from datetime import datetime, timedelta
@@ -8,7 +9,7 @@ from zoneinfo import ZoneInfo
 from django.core.management import call_command
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
@@ -1715,6 +1716,37 @@ class EngagementEndpointTests(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, http_status.HTTP_400_BAD_REQUEST)
 
+    def test_card_shown_after_checkin_links_its_ema(self):
+        from app.models import EngagementLog
+        ema = EMA.objects.create(user=self.user, prompt_id='EMA-CARD', status='completed')
+        response = self.client.post('/telemetry/engagement/', {
+            'ema': ema.id,
+            'event_type': 'resource_card_shown_checkin',
+            'occurred_at': '2026-09-01T15:10:00Z',
+        }, format='json')
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+        log = EngagementLog.objects.get(user=self.user)
+        self.assertEqual(log.ema, ema)
+
+    def test_card_shown_on_home_needs_no_ema(self):
+        response = self.client.post('/telemetry/engagement/', {
+            'event_type': 'resource_card_shown_home',
+            'occurred_at': '2026-09-01T15:10:00Z',
+        }, format='json')
+        self.assertEqual(response.status_code, http_status.HTTP_201_CREATED)
+
+    def test_ema_of_another_user_returns_400(self):
+        from app.models import EngagementLog
+        other = make_user(email='other-engage@ufl.edu')
+        ema = EMA.objects.create(user=other, prompt_id='EMA-OTHER', status='completed')
+        response = self.client.post('/telemetry/engagement/', {
+            'ema': ema.id,
+            'event_type': 'resource_card_shown_checkin',
+            'occurred_at': '2026-09-01T15:10:00Z',
+        }, format='json')
+        self.assertEqual(response.status_code, http_status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(EngagementLog.objects.exists())
+
 
 # ---------------------------------------------------------------------------
 # IDOR: cross-user access blocked for WearableDevice
@@ -2378,6 +2410,47 @@ class EvaluateJITAITriggersTests(NoRealCheckinPushMixin, TestCase):
         self.assertEqual(log.prompt_id, '')
         mock_rand.assert_not_called()
         mock_send.assert_not_called()
+
+    @patch('app.tasks.random.uniform', return_value=0.1)
+    @patch('app.tasks.send_jitai_prompt')
+    def test_decision_row_records_active_flag_alongside_suppression(self, mock_send, mock_rand):
+        from app.tasks import evaluate_jitai_triggers
+        user = self._make_enrolled_user()
+        self._volatile_cohort(user)
+        self._flag(user, 'momentary')
+
+        evaluate_jitai_triggers()
+
+        log = JITAILog.objects.get(user=user)
+        self.assertTrue(log.distress_flag_active)
+        self.assertEqual(log.suppression_reason, 'distress_momentary')
+
+    @patch('app.tasks.random.uniform', return_value=0.1)
+    @patch('app.tasks.send_jitai_prompt')
+    def test_decision_row_records_active_flag_when_run_in_wins(self, mock_send, mock_rand):
+        from app.tasks import evaluate_jitai_triggers
+        user = self._make_enrolled_user()
+        volatile = self._volatile_cohort(user)
+        self._enroll_on_study_day(user, volatile, 1)
+        self._flag(user, 'momentary')
+
+        evaluate_jitai_triggers()
+
+        log = JITAILog.objects.get(user=user)
+        self.assertEqual(log.suppression_reason, 'run_in')
+        self.assertTrue(log.distress_flag_active)
+
+    @patch('app.tasks.random.uniform', return_value=0.1)
+    @patch('app.tasks.send_jitai_prompt')
+    def test_decision_row_not_active_without_a_flag_or_after_expiry(self, mock_send, mock_rand):
+        from app.tasks import evaluate_jitai_triggers
+        user = self._make_enrolled_user()
+        self._volatile_cohort(user)
+        self._flag(user, 'momentary', expires_at=timezone.now() - timedelta(minutes=1))
+
+        evaluate_jitai_triggers()
+
+        self.assertFalse(JITAILog.objects.get(user=user).distress_flag_active)
 
     @patch('app.tasks.random.uniform', return_value=0.1)
     @patch('app.tasks.send_jitai_prompt')
@@ -3091,8 +3164,23 @@ class SendJITAIPromptTests(TestCase):
         self.assertEqual(message.data['jitai_log_id'], log.pk)
 
     @patch('app.notification_service.PushClient')
-    def test_push_payload_is_content_free(self, MockPushClient):
+    def test_push_stays_silent_until_visible_push_is_enabled(self, MockPushClient):
         from app.notification_service import send_jitai_prompt
+        user = self._make_user_with_token()
+        log = self._make_log(user)
+        MockPushClient.return_value.publish.return_value = MagicMock()
+
+        with override_settings(JITAI_VISIBLE_PUSH=False):
+            send_jitai_prompt(user, log)
+
+        message = MockPushClient.return_value.publish.call_args[0][0]
+        self.assertIsNone(getattr(message, 'title', None))
+        self.assertIsNone(getattr(message, 'body', None))
+
+    @override_settings(JITAI_VISIBLE_PUSH=True)
+    @patch('app.notification_service.PushClient')
+    def test_push_is_visible_but_carries_no_message_text(self, MockPushClient):
+        from app.notification_service import load_prompt_messages, send_jitai_prompt
         user = self._make_user_with_token()
         log = self._make_log(user)
         MockPushClient.return_value.publish.return_value = MagicMock()
@@ -3100,8 +3188,11 @@ class SendJITAIPromptTests(TestCase):
         send_jitai_prompt(user, log)
 
         message = MockPushClient.return_value.publish.call_args[0][0]
-        self.assertIsNone(getattr(message, 'title', None))
-        self.assertIsNone(getattr(message, 'body', None))
+        self.assertEqual(message.title, 'REACT')
+        self.assertEqual(message.body, 'You have a new message.')
+        sent = f'{message.title} {message.body} {message.data}'
+        for text in load_prompt_messages().values():
+            self.assertNotIn(text, sent)
 
     @patch('app.notification_service.PushClient')
     def test_no_push_token_returns_false_without_calling_expo(self, MockPushClient):
@@ -4230,6 +4321,7 @@ class EMARotationEndpointTests(TestCase):
         self.assertTrue(data['should_show'])
         self.assertEqual(data['ema_type'], 'prompt_feedback')
         self.assertEqual(data['jitai_log_id'], jitai_log.id)
+        self.assertEqual(data['message_prompt_id'], 'JITAI-EMA-1')
         self.assertEqual([item['item_id'] for item in data['items']], ['C0'])
 
     def _decision(self, minutes_ago, draw, p=0.5, point='ema_1', user=None):
@@ -4440,6 +4532,23 @@ class EMARotationEndpointTests(TestCase):
         self.assertEqual(response.status_code, 201)
         ema = EMA.objects.get(prompt_id=self.reminder.prompt_id)
         self.assertEqual(ema.expires_at, self.reminder.expires_at)
+        self.assertEqual((ema.app_version, ema.app_build), ('', ''))
+
+    def test_submitted_ema_records_app_version(self):
+        response = self.client.post('/ema/responses/', {
+            'prompt_id': self.reminder.prompt_id,
+            'ema_type': 'scheduled_check_in',
+            'app_version': '1.1.0',
+            'app_build': '14',
+            'responses': [
+                {'sub_item_id': 'B1_valence', 'value': 4},
+            ],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['app_build'], '14')
+        ema = EMA.objects.get(prompt_id=self.reminder.prompt_id)
+        self.assertEqual((ema.app_version, ema.app_build), ('1.1.0', '14'))
 
     def test_submit_variable_ema_responses(self):
         response = self.client.post('/ema/responses/', {
@@ -4583,6 +4692,24 @@ class EMAScheduledItemSelectionTests(TestCase):
 
         item_ids = [item['item_id'] for item in response.json()['items']]
         self.assertIn('B3', item_ids)
+
+    def test_b3_follow_ups_depend_on_participant_watching_a_game(self):
+        EventDay.objects.create(date=eastern_today(), sport='football')
+        CheckinReminder.objects.create(user=self.user)
+
+        response = self.client.get('/ema/next/')
+
+        self.assertEqual(response.status_code, 200)
+        b3 = next(item for item in response.json()['items'] if item['item_id'] == 'B3')
+        sub_items = {sub_item['sub_item_id']: sub_item for sub_item in b3['sub_items']}
+        self.assertNotIn('depends_on', sub_items['B3_watching'])
+        expected_condition = {'sub_item_id': 'B3_watching', 'not_equals': 'No'}
+        for sub_item_id in (
+            'B3_importance', 'B3_game_status', 'B3_watch_mode',
+            'B3_bet', 'B3_sudden_shift',
+        ):
+            with self.subTest(sub_item_id=sub_item_id):
+                self.assertEqual(sub_items[sub_item_id]['depends_on'], expected_condition)
 
     def test_b8_only_on_first_check_in_of_day(self):
         representative_sub_item = {
@@ -4940,6 +5067,12 @@ class EMAResponseDistressTests(TestCase):
         flag = DistressFlag.objects.get(user=self.user)
         self.assertEqual(flag.source, 'momentary')
         self.assertEqual(flag.ema_id, response.json()['id'])
+        self.assertTrue(response.json()['distress_active'])
+        self.assertEqual(parse_datetime(response.json()['distress_expires_at']), flag.expires_at)
+        home = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertFalse(home['should_show'])
+        self.assertEqual(home['resource_card'], card)
+        self.assertEqual(home['distress_expires_at'], response.json()['distress_expires_at'])
 
     def test_unflagged_check_in_has_no_card(self):
         response = self._submit(valence=4, stress=2)
@@ -6005,3 +6138,182 @@ class DashboardStudyIdLabelTests(TestCase):
         data = self._get('/dashboard/latency-events/').json()
         self.assertEqual(data[0]['participant_id'], 'RS02')
         self.assertNotIn('ufl.edu', str(data))
+
+
+@override_settings(PASSWORD_HASHERS=FAST_HASHERS)
+class EMANextDistressActiveFieldTests(TestCase):
+
+    def setUp(self):
+        self.user = make_user(email='distress-active@test.com')
+        self.client = authenticated_client(self.user)
+
+    def test_false_without_a_flag(self):
+        response = self.client.get('/ema/next/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.json()['distress_active'], False)
+        self.assertIsNone(response.json()['resource_card'])
+        self.assertIsNone(response.json()['distress_expires_at'])
+
+    def test_true_with_an_active_momentary_flag_and_checkins_still_served(self):
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', signals=['b1_low_valence'],
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
+        response = self.client.get('/ema/next/')
+        self.assertIs(response.json()['distress_active'], True)
+        self.assertNotIn('distress_', response.json().get('reason', ''))
+
+    def test_false_after_the_flag_expires(self):
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', signals=['b1_low_valence'],
+            expires_at=timezone.now() - timedelta(minutes=1),
+        )
+        data = self.client.get('/ema/next/').json()
+        self.assertIs(data['distress_active'], False)
+        self.assertIsNone(data['resource_card'])
+
+    def test_home_resources_without_an_available_checkin(self):
+        from app.distress import resource_card
+        flag = DistressFlag.objects.create(
+            user=self.user, source='momentary', signals=['b2_high_stress'],
+            expires_at=timezone.now() + timedelta(hours=24),
+        )
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertFalse(data['should_show'])
+        self.assertEqual(data['resource_card'], resource_card())
+        self.assertEqual(parse_datetime(data['distress_expires_at']), flag.expires_at)
+
+    def test_resources_do_not_replace_an_available_scheduled_checkin(self):
+        DistressFlag.objects.create(user=self.user, source='baseline', signals=['phq9_self_harm'])
+        reminder = CheckinReminder.objects.create(user=self.user)
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertTrue(data['should_show'])
+        self.assertEqual(data['prompt_id'], reminder.prompt_id)
+        self.assertIsNotNone(data['resource_card'])
+        self.assertIsNone(data['distress_expires_at'])
+
+    def test_resource_expiry_covers_all_overlapping_momentary_flags(self):
+        now = timezone.now()
+        latest_expiry = now + timedelta(hours=24)
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', raised_at=now - timedelta(hours=1),
+            expires_at=latest_expiry,
+        )
+        # Even an imported, newer row with a shorter expiry must not hide the card early.
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', raised_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertEqual(parse_datetime(data['distress_expires_at']), latest_expiry)
+
+    def test_baseline_resources_last_until_contact_and_then_use_remaining_flag(self):
+        baseline = DistressFlag.objects.create(
+            user=self.user, source='baseline', signals=['phq9_self_harm'],
+        )
+        momentary = DistressFlag.objects.create(
+            user=self.user, source='momentary', expires_at=timezone.now() + timedelta(hours=24),
+        )
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertIsNotNone(data['resource_card'])
+        self.assertIsNone(data['distress_expires_at'])
+        baseline.contact_documented_at = timezone.now()
+        baseline.save()
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertEqual(parse_datetime(data['distress_expires_at']), momentary.expires_at)
+        momentary.expires_at = timezone.now() - timedelta(seconds=1)
+        momentary.save()
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertFalse(data['distress_active'])
+        self.assertIsNone(data['resource_card'])
+
+    def test_alert_only_and_other_participants_flags_do_not_show_resources(self):
+        DistressFlag.objects.create(user=self.user, source='baseline', signals=['audit_c', 'problem_gambling'])
+        other = make_user(email='other-resources@test.com')
+        DistressFlag.objects.create(user=other, source='baseline', signals=['phq9_self_harm'])
+        data = self.client.get('/ema/next/?checkin_only=1').json()
+        self.assertFalse(data['distress_active'])
+        self.assertIsNone(data['resource_card'])
+
+
+@override_settings(PASSWORD_HASHERS=FAST_HASHERS)
+class BackfillDistressFlagActiveTests(TestCase):
+
+    def setUp(self):
+        self.user = make_user(email='backfill-distress@test.com')
+        self.now = timezone.now()
+
+    def _log(self, moment, key):
+        return JITAILog.objects.create(
+            user=self.user, decision_point_id=key, decision_made_at=moment,
+            send_prompt=False, status='not_sent',
+        )
+
+    def _run(self, *args):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('backfill_distress_flag_active', *args, stdout=out)
+        return out.getvalue()
+
+    def test_marks_rows_inside_flag_window_only(self):
+        raised = self.now - timedelta(hours=10)
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', signals=['b1_low_valence'],
+            raised_at=raised, expires_at=raised + timedelta(hours=24),
+        )
+        before = self._log(raised - timedelta(minutes=5), 'before')
+        inside = self._log(raised + timedelta(hours=1), 'inside')
+        after = self._log(raised + timedelta(hours=25), 'after')
+
+        self._run()
+
+        before.refresh_from_db(); inside.refresh_from_db(); after.refresh_from_db()
+        self.assertFalse(before.distress_flag_active)
+        self.assertTrue(inside.distress_flag_active)
+        self.assertFalse(after.distress_flag_active)
+
+    def test_baseline_flag_ends_when_contact_documented(self):
+        raised = self.now - timedelta(days=3)
+        DistressFlag.objects.create(
+            user=self.user, source='baseline', signals=['phq9_self_harm'], raised_at=raised,
+            contact_documented_at=raised + timedelta(days=1),
+        )
+        during = self._log(raised + timedelta(hours=2), 'during')
+        later = self._log(raised + timedelta(days=2), 'later')
+
+        self._run()
+
+        during.refresh_from_db(); later.refresh_from_db()
+        self.assertTrue(during.distress_flag_active)
+        self.assertFalse(later.distress_flag_active)
+
+    def test_dry_run_writes_nothing_and_rerun_is_stable(self):
+        raised = self.now - timedelta(hours=5)
+        DistressFlag.objects.create(
+            user=self.user, source='momentary', signals=['b2_high_stress'],
+            raised_at=raised, expires_at=raised + timedelta(hours=24),
+        )
+        row = self._log(raised + timedelta(hours=1), 'row')
+
+        self.assertIn('would change 1', self._run('--dry-run'))
+        row.refresh_from_db()
+        self.assertFalse(row.distress_flag_active)
+
+        self._run()
+        self.assertIn('changed 0', self._run())
+        row.refresh_from_db()
+        self.assertTrue(row.distress_flag_active)
+
+
+class PromptMessagesAppCopyTests(SimpleTestCase):
+    def test_app_copy_matches_message_bank(self):
+        call_command('dump_prompt_messages', check=True, stdout=StringIO())
+
+    def test_every_deliverable_prompt_has_text_in_the_app(self):
+        from app.management.commands.dump_prompt_messages import prompt_messages_path
+        from app.notification_service import _CONTROL_CATALOG, _EMA_CATALOG
+        bundled = json.loads(prompt_messages_path().read_text(encoding='utf-8'))
+        for prompt in _EMA_CATALOG + _CONTROL_CATALOG:
+            with self.subTest(prompt_id=prompt['id']):
+                self.assertTrue(bundled.get(prompt['id']))

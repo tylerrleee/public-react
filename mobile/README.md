@@ -67,7 +67,7 @@ Two push types exist.
 
 The app needs no special handling: `GET /ema/next/` decides what to serve, including `should_show: false` with `reason: "outcome_window_pending"` during the first 60 minutes of a window.
 
-**JITAI prompt** (silent): no title or body. Data is `{ type: "ema_prompt", prompt_id, jitai_log_id }`. Not on a clock. `evaluate_jitai_triggers` also runs every 180 seconds, but it only considers sending after a new completed EMA, then eligibility plus a coin flip. The app has no local prompt catalog, so JITAI message text is not shown on device.
+**JITAI prompt** (visible, neutral): title `REACT`, body `You have a new message.`, the same for every message and arm. Sent visible only when the backend has `JITAI_VISIBLE_PUSH=true`; otherwise it is data-only and shows nothing unless the app is open. Data is `{ type: "ema_prompt", prompt_id, jitai_log_id }`. Not on a clock. `evaluate_jitai_triggers` also runs every 180 seconds, but it only considers sending after a new completed EMA, then eligibility plus a coin flip. Tapping it (or receiving it with the app open) opens the C0 rating; `/ema/next/` returns `message_prompt_id`, and the app shows that message's text from `src/prompts/messages.json`, its bundled copy of the approved bank, above the rating. The text never travels in the push. Regenerate the file with `python manage.py dump_prompt_messages` (from `backend/`) whenever `REACTprompts.csv` changes; a backend test fails until you do.
 
 The home screen checks `GET /ema/next/?checkin_only=1` after sign-in, on return to the foreground, and after closing a survey. An available check-in appears in a card with a **Start check-in** button and its closing time. The card disappears at expiry or after completion. Failed availability requests show a retry button. The card and check-in reminder opens use `checkin_only=1` to skip unanswered C0 feedback. C0 feedback opens through intervention notifications using the default endpoint; it has no home-screen card.
 
@@ -78,6 +78,31 @@ Deploy the backend change together with the mobile update. An older app fetching
 For device QA on an ST test account: background the app, receive a check-in reminder, wait five minutes without tapping it, then launch from the home-screen icon. Confirm the card appears and shows the original closing time. Open, dismiss, and reopen the check-in; the deadline must stay the same. Confirm completion removes the card, and reopening after 30 minutes does not recover the expired check-in. Repeat with the app terminated, and verify notification taps and a failed-network retry.
 
 Tapping an intervention notification opens EMA using `GET /ema/next/`; check-in reminders use `GET /ema/next/?checkin_only=1`. Both submit through `POST /ema/responses/`. A foreground check-in reminder also opens EMA. JITAI receipts (`POST /jitai/receipt/`) fire when `jitai_log_id` is present (foreground, tap, or cold start). Check-in reminders have no `jitai_log_id`, so they do not report a JITAI receipt.
+
+## Distress resources (2026-10-20)
+
+The home screen displays the same server-provided resource card as the post-submission screen whenever a suppressing distress flag is active. It remains separate from the available-check-in card, so participants can still start check-ins. There is no dismiss control on the Home resource card.
+
+Deploy the matching backend update before testing the new mobile build. Both `GET /ema/next/` (including `?checkin_only=1`) and `POST /ema/responses/` provide:
+
+- `distress_active`: whether a suppressing flag is active.
+- `resource_card`: the existing resource payload, or null without an active flag, regardless of survey availability.
+- `distress_expires_at`: the latest expiry across active momentary flags, or null when a suppressing baseline flag is active (or no flag is active).
+
+Home refreshes on launch, foreground return, network reconnection, survey close, and every 60 seconds while open. Successful submissions seed Home immediately. Transient request failures retain a card already loaded in that app session; momentary cards still expire on time. A cold launch needs a successful API request to restore the card; resource/flag state is not saved to device storage. A baseline flag cleared by staff disappears on the next successful refresh (within 60 seconds while Home is open and online).
+
+Resource content stays in the app, with no added local or remote notification. Existing reminder behavior is unchanged. The approved wording still needs confirmation; both screens render the existing backend text without edits. No new dependencies, native configuration, or database migrations are required. OTA is currently disabled in the committed native projects, so distribution to participants needs a new build and installation.
+
+### Physical-device verification
+
+Repeat on an iPhone test account and an Android test account against the updated backend:
+
+1. Start with no suppressing flag and a valid, available check-in. Submit an approved cutoff answer: B1 valence = 1, B2 stress = 7, or sadness/anxiety = 5. A skipped/99 response must not raise a flag.
+2. Confirm the immediate resource screen, then tap Done and confirm the Home card. Capture screenshots of both screens and compare the text with the approved source.
+3. Background/foreground and terminate/relaunch the app while online. The Home card must return even when no check-in is due. Confirm that an available check-in and the resource card can coexist, and another check-in can still be submitted.
+4. With backend staff, verify an otherwise eligible coping-prompt decision is suppressed with the distress reason, and scheduled reminders/check-ins, existing outcome check-ins and quick ratings remain available under their normal eligibility rules. Check resource content never appears in a notification.
+5. On test data, verify the card clears when the last momentary flag expires, stays through overlapping flags, and stays for a suppressing baseline flag until staff document contact. After staff clear the baseline flag, foreground the app or wait for the next Home refresh.
+6. Log out and use a different account; the previous account's card must not carry over.
 
 ## Local backend
 
@@ -166,7 +191,6 @@ CI (`.github/workflows/django-ci.yml`) runs Django tests only. It does not build
 ## Known issues
 
 - Push token registration skips simulators (`Device.isDevice`).
-- No local JITAI prompt catalog, so silent pushes have no on-device message text.
 - Register/login does not set `is_enrolled` or create a wearable.
 <<<<<<< HEAD
 - The 9–21 reminder window is a placeholder.

@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import * as Application from 'expo-application';
 import {
   ActivityIndicator,
   AppState,
   LayoutAnimation,
-  Linking,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -23,15 +23,18 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 const HEADER_TITLE_SWAP = LayoutAnimation.create(180, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity);
 const STICK_THRESHOLD = 12;
 import EMASubItemField from '../components/EMASubItemField';
+import SupportResourceCard from '../components/SupportResourceCard';
 import { ema as emaApi, telemetry } from '../api/endpoints';
 import {
   EMAAnswerValue,
   EMAItem,
   EMANextShowResponse,
   EMASubItem,
+  EMASubmitResponse,
   ResourceCard,
 } from '../api/types';
 import { isAnswered, isSubItemVisible, pruneHiddenAnswers, visibleSubItems } from '../ema/visibility';
+import { promptMessage } from '../prompts/messages';
 import { useAuthStore } from '../store/authStore';
 import { useAlertStore } from '../store/alertStore';
 import { log } from '../utils/logger';
@@ -49,13 +52,12 @@ const MAX_TIMEOUT_MS = 2147483647;
 
 type Phase = 'loading' | 'form' | 'noshow' | 'expired' | 'error' | 'resources';
 
-const DIALABLE = /^[0-9+\-\s()]+$/;
-
 type Props = {
   visible: boolean;
   jitaiLogId?: number;
   checkinOnly?: boolean;
   onClose: () => void;
+  onSubmitted: (response: EMASubmitResponse) => void;
 };
 
 function isSupported(sub: EMASubItem) {
@@ -68,7 +70,7 @@ function isSupported(sub: EMASubItem) {
   );
 }
 
-export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, onClose }: Props) {
+export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, onClose, onSubmitted }: Props) {
   const userId = useAuthStore((s) => s.userId);
   const showAlert = useAlertStore((s) => s.show);
 
@@ -76,12 +78,14 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
   const [survey, setSurvey] = useState<EMANextShowResponse | null>(null);
   const [noShowReason, setNoShowReason] = useState<string | null>(null);
   const [resourceCard, setResourceCard] = useState<ResourceCard | null>(null);
+  const [resourceCardEmaId, setResourceCardEmaId] = useState<number | null>(null);
   const [answers, setAnswers] = useState<Record<string, EMAAnswerValue>>({});
   const [submitting, setSubmitting] = useState(false);
   const [activeSectionTitle, setActiveSectionTitle] = useState<string | null>(null);
   const sectionOffsets = useRef<Record<string, number>>({});
 
   const items = survey?.items ?? [];
+  const message = survey?.ema_type === 'prompt_feedback' ? promptMessage(survey.message_prompt_id) : undefined;
   const visibleItems = visibleSubItems(items, answers).filter(isSupported);
   const complete =
     visibleItems.length > 0 && visibleItems.every((sub) => isAnswered(answers[sub.sub_item_id]));
@@ -103,11 +107,25 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
     [userId, jitaiLogId],
   );
 
+  const logResourceCardShown = useCallback(() => {
+    if (!userId) return;
+    telemetry
+      .logEngagement({
+        event_type: 'resource_card_shown_checkin',
+        occurred_at: new Date().toISOString(),
+        ...(resourceCardEmaId !== null && { ema: resourceCardEmaId }),
+      })
+      .catch((e) => {
+        log('[EMA] resource_card_shown_checkin log failed:', e?.response?.status ?? e?.message);
+      });
+  }, [userId, resourceCardEmaId]);
+
   const load = useCallback(async () => {
     setPhase('loading');
     setSurvey(null);
     setNoShowReason(null);
     setResourceCard(null);
+    setResourceCardEmaId(null);
     setAnswers({});
     setSubmitting(false);
     setActiveSectionTitle(null);
@@ -205,14 +223,18 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
         jitai_log_id: survey.jitai_log_id ?? jitaiLogId ?? null,
         outcome_window_start: survey.outcome_window_start ?? null,
         outcome_window_end: survey.outcome_window_end ?? null,
+        app_version: Application.nativeApplicationVersion,
+        app_build: Application.nativeBuildVersion,
         responses: visibleItems.map((sub) => ({
           sub_item_id: sub.sub_item_id,
           value: answers[sub.sub_item_id],
         })),
       });
+      onSubmitted(submitted);
       logEngagement('ema_completed', survey.jitai_log_id);
       if (submitted.resource_card) {
         setResourceCard(submitted.resource_card);
+        setResourceCardEmaId(submitted.id);
         setSubmitting(false);
         setPhase('resources');
         return;
@@ -328,26 +350,7 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
     if (phase === 'resources' && resourceCard) {
       return (
         <ScrollView contentContainerStyle={styles.body}>
-          <Text style={styles.sectionTitle}>{resourceCard.title}</Text>
-          <Text style={styles.resourceMessage}>{resourceCard.message}</Text>
-          {resourceCard.resources.map((resource) => (
-            <View key={resource.name} style={styles.resource}>
-              <Text style={styles.resourceName}>{resource.name}</Text>
-              {resource.description ? (
-                <Text style={styles.messageBody}>{resource.description}</Text>
-              ) : null}
-              {resource.contact && DIALABLE.test(resource.contact) ? (
-                <TouchableOpacity
-                  style={styles.resourceCall}
-                  onPress={() => Linking.openURL(`tel:${resource.contact!.replace(/\s/g, '')}`)}
-                  accessibilityLabel={`Call ${resource.name}`}>
-                  <Text style={styles.resourceCallText}>Call {resource.contact}</Text>
-                </TouchableOpacity>
-              ) : resource.contact ? (
-                <Text style={styles.resourceContact}>{resource.contact}</Text>
-              ) : null}
-            </View>
-          ))}
+          <SupportResourceCard card={resourceCard} onShown={logResourceCardShown} />
         </ScrollView>
       );
     }
@@ -371,6 +374,12 @@ export default function EMAScreen({ visible, jitaiLogId, checkinOnly = false, on
         scrollEventThrottle={16}>
         {survey?.outcome_window_active && (
           <Text style={styles.windowNote}>Follow-up check-in</Text>
+        )}
+
+        {message && (
+          <View style={styles.promptMessage}>
+            <Text style={styles.promptMessageText}>{message}</Text>
+          </View>
         )}
 
         {items.map(renderSection)}
@@ -473,29 +482,21 @@ const styles = StyleSheet.create({
   body: { paddingHorizontal: 24, paddingTop: 20, paddingBottom: 24 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   windowNote: { fontSize: 13, color: colors.primary, fontWeight: '600', marginBottom: 20 },
+  promptMessage: {
+    backgroundColor: colors.primaryMuted,
+    borderColor: colors.primaryBorder,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: 20,
+    marginBottom: 28,
+  },
+  promptMessageText: { fontSize: 18, lineHeight: 26, fontWeight: '600', color: colors.textPrimary },
   section: { marginBottom: 12 },
   sectionTitle: { ...typography.heading, marginBottom: 20 },
   group: { marginBottom: 8 },
   groupText: { ...typography.label, marginBottom: 12 },
   messageTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary, marginBottom: 8, textAlign: 'center' },
   messageBody: { ...typography.body, textAlign: 'center', lineHeight: 21 },
-  resourceMessage: { ...typography.body, lineHeight: 21, marginBottom: 20 },
-  resource: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: radius.md,
-    padding: 16,
-    marginBottom: 12,
-  },
-  resourceName: { ...typography.label, marginBottom: 4 },
-  resourceContact: { ...typography.body, marginTop: 8, fontWeight: '600' },
-  resourceCall: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    padding: 12,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  resourceCallText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   retry: { marginTop: 20, paddingVertical: 10, paddingHorizontal: 24 },
   retryText: { fontSize: 16, color: colors.primary, fontWeight: '600' },
   footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 8 },

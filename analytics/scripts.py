@@ -162,8 +162,11 @@ def load_users(user_id: Optional[int] = None) -> pd.DataFrame:
     Outputs:
         pd.DataFrame with columns:
             user_id, email, first_name, last_name, birthdate, gender,
-            is_enrolled, enrolled_at.
-        One row per participant. enrolled_at is timezone-aware (UTC).
+            is_enrolled, enrolled_at, schedule_restarted_at.
+        One row per participant. enrolled_at and schedule_restarted_at are
+        timezone-aware (UTC). schedule_restarted_at is set only for a
+        participant whose schedule was restarted; their records timestamped
+        before it are pre-restart.
 
     Example:
         load_users(user_id=42)  ->  1-row DataFrame for participant 42
@@ -180,10 +183,10 @@ def load_users(user_id: Optional[int] = None) -> pd.DataFrame:
     df = pd.DataFrame(
         queryset.values(
             "user_id", "email", "first_name", "last_name", "birthdate",
-            "gender", "is_enrolled", "enrolled_at",
+            "gender", "is_enrolled", "enrolled_at", "schedule_restarted_at",
         )
     )
-    df = _to_utc(df, ["enrolled_at"])
+    df = _to_utc(df, ["enrolled_at", "schedule_restarted_at"])
     _warn_undated_enrollments(df)
     return df
 
@@ -271,8 +274,9 @@ def load_ema(
         pd.DataFrame with columns matching app_ema:
             id, user_id, prompt_id, sent_at, responded_at, status, ema_type,
             source_jitai_log_id, outcome_window_start, outcome_window_end,
-            expires_at, mood, stress, energy.
+            expires_at, app_version, app_build, mood, stress, energy.
         One row per EMA prompt. Timestamps are timezone-aware (UTC).
+        app_version/app_build are blank for builds that did not send them.
 
     Example:
         load_ema(user_id=42, start_date=date(2026,9,1))
@@ -293,7 +297,8 @@ def load_ema(
         queryset.values(
             "id", "user_id", "prompt_id", "sent_at", "responded_at", "status",
             "ema_type", "source_jitai_log_id", "outcome_window_start",
-            "outcome_window_end", "expires_at", "mood", "stress", "energy",
+            "outcome_window_end", "expires_at", "app_version", "app_build",
+            "mood", "stress", "energy",
         )
     )
     return _to_utc(
@@ -356,6 +361,7 @@ def load_jitai_log(
             "ema_energy", "status", "delivery_status", "push_sent_at",
             "device_received_at", "receipt_reported_at", "receipt_platform",
             "receipt_app_state", "delivery_error", "suppression_reason",
+            "distress_flag_active",
         )
     )
     return _to_utc(
@@ -453,7 +459,8 @@ def load_engagement_log(
     """
     Purpose:
         Load user engagement events (EMA opened/dismissed/completed,
-        notification tapped/dismissed) from app_engagementlog.
+        notification tapped/dismissed, resource card shown after a check-in
+        or on home) from app_engagementlog.
 
     Inputs:
         user_id    - int or None. If None, returns records for all participants.
@@ -462,7 +469,8 @@ def load_engagement_log(
 
     Outputs:
         pd.DataFrame with columns:
-            id, user_id, jitai_log_id, event_type, occurred_at, recorded_at.
+            id, user_id, jitai_log_id, ema_id, event_type, occurred_at,
+            recorded_at. ema_id is set on resource_card_shown_checkin rows.
         One row per engagement event. Timestamps are timezone-aware (UTC).
 
     Example:
@@ -481,7 +489,7 @@ def load_engagement_log(
 
     df = pd.DataFrame(
         queryset.values(
-            "id", "user_id", "jitai_log_id", "event_type",
+            "id", "user_id", "jitai_log_id", "ema_id", "event_type",
             "occurred_at", "recorded_at",
         )
     )

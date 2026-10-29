@@ -99,11 +99,12 @@ class EMASerializer(serializers.ModelSerializer):
             'id', 'user', 'prompt_id', 'sent_at', 'responded_at', 'status',
             'ema_type', 'source_jitai_log', 'outcome_window_start',
             'outcome_window_end', 'expires_at', 'served_sub_item_ids',
+            'app_version', 'app_build',
             'mood', 'stress', 'energy', 'item_responses',
         ]
         read_only_fields = (
             'id', 'sent_at', 'user', 'responded_at', 'status', 'expires_at',
-            'served_sub_item_ids',
+            'served_sub_item_ids', 'app_version', 'app_build',
         )
         extra_kwargs = {
             'mood':   {'min_value': 1, 'max_value': 7},
@@ -127,10 +128,10 @@ class JITAILogSerializer(serializers.ModelSerializer):
             'send_prompt', 'status',
             'trigger_signal', 'ema_mood', 'ema_stress', 'ema_energy',
             'eligible_prompt_ids', 'evaluated_items', 'matched_categories',
-            'category_drawn', 'fallback_reason', 'suppression_reason',
+            'category_drawn', 'fallback_reason', 'suppression_reason', 'distress_flag_active',
         ]
         read_only_fields = (
-            'id', 'triggered_at', 'suppression_reason',
+            'id', 'triggered_at', 'suppression_reason', 'distress_flag_active',
             'expo_ticket_id', 'expo_receipt_status', 'expo_receipt_error', 'expo_receipt_checked_at',
         )
 
@@ -237,10 +238,16 @@ class EngagementLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = EngagementLog
         fields = [
-            'id', 'user', 'jitai_log', 'event_type', 'occurred_at',
+            'id', 'user', 'jitai_log', 'ema', 'event_type', 'occurred_at',
             'recorded_at',
         ]
         read_only_fields = ('id', 'recorded_at', 'user')
+
+    def validate_ema(self, value):
+        user = self.context.get('user')
+        if value is not None and user is not None and value.user_id != user.pk:
+            raise serializers.ValidationError('EMA not found.')
+        return value
 
 
 
@@ -291,6 +298,8 @@ class EMAResponseSubmitSerializer(serializers.Serializer):
     jitai_log_id = serializers.IntegerField(required=False, allow_null=True)
     outcome_window_start = serializers.DateTimeField(required=False, allow_null=True)
     outcome_window_end = serializers.DateTimeField(required=False, allow_null=True)
+    app_version = serializers.CharField(max_length=32, required=False, allow_blank=True, allow_null=True)
+    app_build = serializers.CharField(max_length=32, required=False, allow_blank=True, allow_null=True)
     # What the client was actually shown, echoed back from /ema/next/. Optional:
     # the server recomputes the same set when a client does not send it.
     served_sub_item_ids = serializers.ListField(

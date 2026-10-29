@@ -31,11 +31,19 @@ export type EMAItem = {
   sub_items: EMASubItem[];
 };
 
-export type EMANextShowResponse = {
+export type ResourceCardState = {
+  distress_active?: boolean;
+  // Null while a suppressing baseline flag is active; otherwise the last flag's expiry.
+  distress_expires_at?: string | null;
+  resource_card?: ResourceCard | null;
+};
+
+export type EMANextShowResponse = ResourceCardState & {
   should_show: true;
   prompt_id: string;
   ema_type: EMAType;
   jitai_log_id: number | null;
+  message_prompt_id?: string;
   outcome_window_active: boolean;
   outcome_window_start?: string | null;
   outcome_window_end?: string | null;
@@ -45,7 +53,7 @@ export type EMANextShowResponse = {
   items: EMAItem[];
 };
 
-export type EMANextNoShowResponse = {
+export type EMANextNoShowResponse = ResourceCardState & {
   should_show: false;
   reason: string;
   outcome_window_active: boolean;
@@ -68,6 +76,8 @@ export type EMASubmitRequest = {
   jitai_log_id?: number | null;
   outcome_window_start?: string | null;
   outcome_window_end?: string | null;
+  app_version?: string | null;
+  app_build?: string | null;
   responses: EMAAnswer[];
 };
 
@@ -91,7 +101,7 @@ export type ResourceCard = {
   resources: ResourceCardResource[];
 };
 
-export type EMASubmitResponse = {
+export type EMASubmitResponse = ResourceCardState & {
   id: number;
   user: number;
   prompt_id: string;
@@ -107,5 +117,4 @@ export type EMASubmitResponse = {
   stress?: number | null;
   energy?: number | null;
   item_responses: EMAStoredAnswer[];
-  resource_card?: ResourceCard | null;
 };

@@ -169,14 +169,14 @@ that key is accepted for.
 `settings.py` is fully env-driven and picks the database by environment: `DATABASE_URL`
 (Heroku/dj-database-url) → Cloud SQL when `K_SERVICE` is set (GCP) → discrete `DATABASE_*` vars. Key
 env vars: `SECRET_KEY`, `API_KEY`, `DASHBOARD_API_KEY`, `REDIS_URL`, `SENTRY_DSN`,
-`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`).
+`JITAI_RANDOMIZATION_PROBABILITY` (default `0.5` — coin-flip gate in `evaluate_jitai_triggers`), `JITAI_VISIBLE_PUSH` (default off — sends the JITAI push with its neutral title/body; turn on only once every participant runs a build that bundles `messages.json`).
 
 Two push types reach the device (details in `mobile/README.md`): a **visible check-in reminder**
 (`send_checkin_reminders`, which divides 9–21 participant-local time into six fixed two-hour
 slots and fires at most one reminder per slot, 30 min after it opens, only where no check-in
 has landed and never as a catch-up; there is no cooldown, and the 120 minutes sometimes quoted
 as one is just the slot length; it also sends the **outcome check-in reminder** described below) and a
-**silent JITAI prompt** (`evaluate_jitai_triggers`, sent only after a
+**JITAI prompt** with a fixed, neutral title/body (`evaluate_jitai_triggers`, sent only after a
 newly completed EMA passes eligibility + randomization).
 
 `send_jitai_prompt` stores Expo's ticket ID on `JITAILog.expo_ticket_id`. `check_expo_receipts` asks Expo for
@@ -235,11 +235,12 @@ docs/superpowers/  # schema design specs/plans from the original REACT model bui
 ## Schema authority
 
 The **Django Models** section below is a simplified design reference and is intentionally leaner than
-what is deployed. The live schema is richer — e.g. `JITAILog` has **36** columns (the message-arm
+what is deployed. The live schema is richer — e.g. `JITAILog` has **37** columns (the message-arm
 randomization and routing audit landed in migrations `0042`–`0043`, and
-`threshold_at_decision` / `threshold_source` in `0046`); `User` carries `study_id` (migration
-`0051`, see the baseline-import section below); `EMA` carries `ema_type`,
-outcome-window fields and `served_sub_item_ids`; there are additional tables (`EMAItemResponse`,
+`threshold_at_decision` / `threshold_source` in `0046`, and `distress_flag_active` in `0054`); `User` carries `study_id` (migration
+`0051`, see the baseline-import section below) and `schedule_restarted_at` (`0055`: set when staff restart a
+participant's schedule by moving `enrolled_at`; records before it are pre-restart, kept, and logged in `docs/CHANGELOG.md`); `EMA` carries `ema_type`,
+outcome-window fields, `served_sub_item_ids` and `app_version`/`app_build` (`0056`); there are additional tables (`EMAItemResponse`,
 `EngagementLog`, `PhoneTelemetry`, `EventDay`, `CheckinReminder`, `WearableSync`, `DistressFlag`); and four derived
 `dashboard_*` monitoring tables. For the actual deployed schema,
 trust `backend/app/models.py` and `analytics/analysis-resources/production_schema.md` (the latter maps every
@@ -508,6 +509,8 @@ endpoints and `/dashboard/participants/`: study ID, else Labfront ID, else `user
 carries email. The admin "Enroll for notifications" shortcut writes a `TEST-<user_id>` Labfront ID, so never use it on
 a real participant (user 102 / RS02 was enrolled that way and needs the real ID set).
 
+`JITAILog.distress_flag_active` (migration `0054`, added 2026-10-19) is true on every decision row written while any distress flag was active, whatever the row's own outcome: below threshold, run-in, randomized out or sent. It records context only and does not drive any decision; `suppression_reason` is still the sole record of what blocked a prompt, so a below-threshold row inside a flag window stays `not_sent` with `distress_flag_active=True`. `manage.py backfill_distress_flag_active [--dry-run] [--user N]` (dashboard app) fills it for older rows from `DistressFlag.was_active_at`. `GET /ema/next/` separately returns `distress_active` for the app. The resource card is returned by `POST /ema/responses/` after any flagged check-in, independent of whether a decision was due. Since migration `0056` the app logs each time it puts the card on screen as an `EngagementLog` event: `resource_card_shown_checkin` (linked by `ema` to the check-in that returned it) or `resource_card_shown_home`. An older build logs neither, so a missing event on a check-in with blank `EMA.app_build` means "old build", not "card not shown".
+
 A suppressed decision point is logged with `send_prompt=False`, `randomization_draw` and
 `randomization_probability` both null, `status` and `delivery_status` both `'suppressed'` (never
 `not_sent`, which stays for ordinary unavailable or randomized-out decisions), and
@@ -544,8 +547,9 @@ a write through it always gets this safeguard check regardless of what the calle
 is active) after any check-in submitted under an active override. Card contents are
 `RESOURCE_CARD_RESOURCES` in `distress.py`: the seven resources from the study's resource document
 (the same seven as the baseline block), with digits-only contacts so tap-to-call works, and the
-911 instruction in the card message. The backend cannot see the app version, so a participant on
-an old build is suppressed but sees no card; every participant must be on the new build before Day 8.
+911 instruction in the card message. A participant on a build older than the card is suppressed but
+sees no card; `EMA.app_version`/`app_build` (sent on submit since `0056`, blank from older builds) is
+how to tell who has not updated.
 
 Decided by Dr. Chang 2026-09-23, so do not add them to the backend: **staff alerts come from
 Qualtrics** (it emails the PI and staff when a flagged baseline is submitted, so the same-day
@@ -560,10 +564,19 @@ for the rest of the study, by design.
 
 ## Notification Pipeline
 
-Silent pushes are used so notification content never transits Expo/Firebase servers as stored
-data. Only the `prompt_id` (a reference to a template) is stored in `JITAILog`, never the
-message text itself. This is a privacy/IRB constraint — do not store notification title or
-message body in the database.
+Message text never transits Expo/Firebase servers. The JITAI push carries a fixed, neutral
+title/body (`JITAI_PUSH_TITLE` / `JITAI_PUSH_BODY` in `notification_service.py`, identical for
+every arm and message) plus `prompt_id`; the app looks the ID up in its bundled copy of the bank
+(`mobile/src/prompts/messages.json`) and shows the text above the C0 rating, which `/ema/next/`
+serves with `message_prompt_id`. Only the `prompt_id` is stored in `JITAILog`, never the message
+text. This is a privacy/IRB constraint — do not store notification title or message body in the
+database, and do not put message text in the push.
+
+Until 2026-10-26 the push had no title or body and the app had no bank, so no JITAI message was
+ever displayed (production: 41 sent from 2026-09-30, 1 reached the app, 0 opened from a
+notification). `messages.json` is generated from `backend/app/data/REACTprompts.csv` by
+`manage.py dump_prompt_messages`; `--check` (also a test) fails when the CSV changes without the
+app copy, and a bank change needs a new app build. The visible title/body are sent only when `JITAI_VISIBLE_PUSH=true`; with it off the push stays data-only, as before.
 
 Expo push token is stored in `User.push_token` and updated on app launch.
 
@@ -813,6 +826,27 @@ it was answered. A check-in whose window misses the export's dates is "outside e
 Follow the existing pattern in `serializers.py` — one `ModelSerializer` subclass per model,
 explicit `fields` list (avoid `fields = '__all__'` for new models), `read_only_fields` for
 auto-generated PKs and timestamps.
+
+---
+
+## Follow-ups go to GitHub Issues
+
+When work turns up something that can't be finished in the current change, file it as an issue
+on `smashlab-uf/REACT` with `gh issue create` instead of leaving it in a chat reply, a code comment
+or a TODO. Create the issue without asking first, then give the user its link. Before filing,
+run `gh issue list --label <label> --state open` and add a comment to a matching issue rather
+than opening a duplicate. Issue bodies carry no Claude attribution.
+
+| Label | When to file | Template |
+|---|---|---|
+| `mobile-rebuild` | A change reaches participants only through a new app build: a native dependency, `app.json`/config, a bundled asset such as `mobile/src/prompts/messages.json`, or JS that a backend flag depends on | `.github/ISSUE_TEMPLATE/mobile-rebuild.yml` |
+| `decision-needed` | A technical choice deferred for later, where the code currently runs on a provisional default | `.github/ISSUE_TEMPLATE/decision-needed.yml` |
+| `pi-signoff` | Add to `decision-needed` when Dr. Chang must approve it: thresholds, protocol timings such as `OUTCOME_CHECK_IN_DELAY_MINUTES`, IRB scope, RA access | same |
+
+Give each issue the branch name, the files involved, and what stays gated until it closes. Put
+`Needs rebuild: #N` / `Open decision: #N` lines in the PR description. A rebuild issue closes
+when the build ships and recent `EMA.app_build` values confirm participants are on it, not when
+the PR merges.
 
 ---
 

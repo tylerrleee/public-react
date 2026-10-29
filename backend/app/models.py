@@ -16,6 +16,10 @@ class User(models.Model):
     push_token = models.CharField(max_length=128, blank=True, null=True)
     is_enrolled = models.BooleanField(default=False)
     enrolled_at = models.DateTimeField(null=True, blank=True)
+    # Set when staff restart a participant's schedule (enrolled_at moved to the
+    # restart). Records timestamped before it are pre-restart and kept, never
+    # deleted.
+    schedule_restarted_at = models.DateTimeField(null=True, blank=True)
     # The Qualtrics baseline survey's "pid" embedded-data field (auto-populated
     # from the participant's personalized distribution link, confirmed
     # 2026-10-01 -- not typed by the participant). Crosswalk only: never a
@@ -185,6 +189,10 @@ class EMA(models.Model):
     # can only be inferred from what they happened to answer. NULL on rows
     # written before this field existed.
     served_sub_item_ids = models.JSONField(null=True, blank=True)
+    # The build that submitted this check-in. Blank on rows written before the
+    # app sent it, and on any submission from a build older than that.
+    app_version = models.CharField(max_length=32, blank=True, default='')
+    app_build = models.CharField(max_length=32, blank=True, default='')
     mood = models.PositiveSmallIntegerField(
         null=True, blank=True,
         validators=[MinValueValidator(1), MaxValueValidator(7)],
@@ -292,6 +300,8 @@ ENGAGEMENT_EVENT_TYPES = (
     ('ema_completed', 'EMA Completed'),
     ('notification_tapped', 'Notification Tapped'),
     ('notification_dismissed', 'Notification Dismissed'),
+    ('resource_card_shown_checkin', 'Resource Card Shown After Check-in'),
+    ('resource_card_shown_home', 'Resource Card Shown On Home'),
 )
 
 def validate_phone_metadata(value):
@@ -426,6 +436,7 @@ class JITAILog(models.Model):
     suppression_reason = models.CharField(
         max_length=32, choices=SUPPRESSION_CHOICES, blank=True, default='', db_index=True
     )
+    distress_flag_active = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ['-triggered_at']
@@ -461,6 +472,17 @@ class DistressFlag(models.Model):
             return suppresses and self.contact_documented_at is None
         return self.expires_at is not None and now < self.expires_at
 
+    def was_active_at(self, moment):
+        if moment < self.raised_at:
+            return False
+        if self.source == 'baseline':
+            if self.contact_documented_at is not None and self.contact_documented_at <= moment:
+                return False
+            from dashboard.data.config import BASELINE_ALERT_ONLY_SIGNALS
+            return not self.signals or any(
+                code not in BASELINE_ALERT_ONLY_SIGNALS for code in self.signals)
+        return self.expires_at is not None and moment < self.expires_at
+
     def __str__(self):
         return f"{self.source} distress flag for {self.user.email} at {self.raised_at}"
 
@@ -468,6 +490,7 @@ class DistressFlag(models.Model):
 class EngagementLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     jitai_log = models.ForeignKey(JITAILog, on_delete=models.SET_NULL, null=True, blank=True)
+    ema = models.ForeignKey(EMA, on_delete=models.SET_NULL, null=True, blank=True)
     event_type = models.CharField(max_length=64, choices=ENGAGEMENT_EVENT_TYPES)
     occurred_at = models.DateTimeField(db_index=True)
     recorded_at = models.DateTimeField(auto_now_add=True)
