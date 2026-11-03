@@ -1,0 +1,17 @@
+{
+  "n_participants": 100,
+  "n_analysed": 100,
+  "realised_resp_mean": 0.7842857142857143,
+  "mssd_r": 0.6732718664720273,
+  "mssd_spearman": 0.6928892889288928,
+  "mssd_slope": 0.8091850850752504,
+  "empirical_mean": 0.37271068636284804,
+  "empirical_sd": 0.18240630879363695,
+  "true_mean": 0.29868206052122054,
+  "true_sd": 0.15176878348708595,
+  "sigma_r": 0.673086642401338,
+  "rho_r": 0.4394277731697054,
+  "eligible_share_all_prompts": 0.18371428571428572,
+  "crossing_share_evaluable": 0.28059701492537314,
+  "tie_share_evaluable": 0.006396588486140725
+}

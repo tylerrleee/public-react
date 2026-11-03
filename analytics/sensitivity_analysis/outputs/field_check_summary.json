@@ -1,0 +1,53 @@
+{
+  "participants": 5,
+  "decisions_mrt": 399,
+  "evaluable_mrt": 399,
+  "crossings_mrt": 79,
+  "crossing_rate": 0.19799498746867167,
+  "crossing_ci": [
+    0.16185467439918566,
+    0.2398952938265388
+  ],
+  "design_crossing_rate": 0.2,
+  "tie_rate": 0.017543859649122806,
+  "evaluable_overnight_window": 235,
+  "crossing_rate_overnight_window": 0.18723404255319148,
+  "crossing_ci_overnight_window": [
+    0.1425356480305379,
+    0.24199368019369102
+  ],
+  "evaluable_daytime_window": 164,
+  "crossing_rate_daytime_window": 0.21341463414634146,
+  "crossing_ci_daytime_window": [
+    0.15764230190761339,
+    0.2823058396734964
+  ],
+  "evaluable_first_of_day": 84,
+  "crossing_rate_first_of_day": 0.15476190476190477,
+  "crossing_ci_first_of_day": [
+    0.09273222805420128,
+    0.24698835991323098
+  ],
+  "randomized_mrt": 66,
+  "availability": 0.16541353383458646,
+  "availability_ci": [
+    0.13218063614443298,
+    0.2050278348774277
+  ],
+  "availability_planned": 0.21,
+  "crossings_per_week_mean": 5.21111111111111,
+  "sent_per_day_mean": 0.36984126984126986,
+  "share_diffs_overnight_mean": 0.2380777293984841,
+  "share_windows_with_overnight_mean": 0.6285356304538694,
+  "share_same_day_diffs_skipping_slot_mean": 0.13868991609161946,
+  "share_non_scheduled_mean": 0.10293896269075828,
+  "share_composite_off_integer_mean": 0.6675523587340886,
+  "corr_valence_stress_mean": -0.3661565607000582,
+  "corr_valence_arousal_mean": 0.1873916645605611,
+  "corr_stress_arousal_mean": -0.034502619692877434,
+  "item_sd_mean": 1.2060780587033397,
+  "item_rho_mean": 0.30136093633182476,
+  "replay_rows": 524,
+  "replay_mssd_match": 1.0,
+  "replay_threshold_match": 1.0
+}

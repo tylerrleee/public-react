@@ -1,0 +1,11 @@
+{
+  "m_min": 0.007022005999643128,
+  "m_max": 3.8633648411910384,
+  "share_evaluable_outside": 0.00020474217198342446,
+  "by_scenario": {
+    "drift": 0.0008189686879336979,
+    "shift_down": 0.0,
+    "shift_up": 0.0,
+    "stationary": 0.0
+  }
+}

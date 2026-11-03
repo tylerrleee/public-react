@@ -1,0 +1,104 @@
+{
+  "sigma_slope": -0.029422782918708847,
+  "sigma_p": 1.0434442995044137e-06,
+  "sigma_anova_F": 3.404608019477866,
+  "sigma_anova_p": 0.0003660501204297618,
+  "rho_slope": -0.10009924158260786,
+  "rho_p": 1.9072157591594504e-06,
+  "rho_anova_F": 3.794684347318441,
+  "rho_anova_p": 9.218333573026678e-05,
+  "mssd_r_slope": 0.36460224649116374,
+  "mssd_r_p": 6.4782399509938165e-06,
+  "levels": [
+    {
+      "resp_rate": 0.5,
+      "n": 200,
+      "err_sigma": 0.0575,
+      "ci_sigma": 0.0067,
+      "err_rho": 0.2292,
+      "ci_rho": 0.0239,
+      "mssd_r": 0.7142
+    },
+    {
+      "resp_rate": 0.55,
+      "n": 200,
+      "err_sigma": 0.0561,
+      "ci_sigma": 0.0059,
+      "err_rho": 0.1995,
+      "ci_rho": 0.0201,
+      "mssd_r": 0.725
+    },
+    {
+      "resp_rate": 0.6,
+      "n": 200,
+      "err_sigma": 0.0521,
+      "ci_sigma": 0.0061,
+      "err_rho": 0.1849,
+      "ci_rho": 0.0189,
+      "mssd_r": 0.7627
+    },
+    {
+      "resp_rate": 0.65,
+      "n": 200,
+      "err_sigma": 0.0531,
+      "ci_sigma": 0.0055,
+      "err_rho": 0.197,
+      "ci_rho": 0.0199,
+      "mssd_r": 0.7933
+    },
+    {
+      "resp_rate": 0.7,
+      "n": 200,
+      "err_sigma": 0.05,
+      "ci_sigma": 0.0052,
+      "err_rho": 0.1771,
+      "ci_rho": 0.018,
+      "mssd_r": 0.8041
+    },
+    {
+      "resp_rate": 0.75,
+      "n": 200,
+      "err_sigma": 0.0432,
+      "ci_sigma": 0.0044,
+      "err_rho": 0.1707,
+      "ci_rho": 0.0169,
+      "mssd_r": 0.8379
+    },
+    {
+      "resp_rate": 0.8,
+      "n": 200,
+      "err_sigma": 0.0464,
+      "ci_sigma": 0.0053,
+      "err_rho": 0.1843,
+      "ci_rho": 0.0188,
+      "mssd_r": 0.843
+    },
+    {
+      "resp_rate": 0.85,
+      "n": 200,
+      "err_sigma": 0.0451,
+      "ci_sigma": 0.0048,
+      "err_rho": 0.1748,
+      "ci_rho": 0.0166,
+      "mssd_r": 0.866
+    },
+    {
+      "resp_rate": 0.9,
+      "n": 200,
+      "err_sigma": 0.0449,
+      "ci_sigma": 0.0044,
+      "err_rho": 0.1724,
+      "ci_rho": 0.0165,
+      "mssd_r": 0.8584
+    },
+    {
+      "resp_rate": 0.95,
+      "n": 200,
+      "err_sigma": 0.0461,
+      "ci_sigma": 0.0046,
+      "err_rho": 0.1691,
+      "ci_rho": 0.0152,
+      "mssd_r": 0.867
+    }
+  ]
+}

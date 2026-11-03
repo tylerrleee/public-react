@@ -1,0 +1,277 @@
+\documentclass[11pt,letterpaper]{article}
+
+% --- Packages ---
+\usepackage[top=1in,bottom=1in,left=1in,right=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+\documentclass{article}
+\usepackage{graphicx} % Required to handle images
+% --- Hyperref Setup ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!70!black,
+    urlcolor=blue!70!black
+}
+
+% --- Styling Commands ---
+\newcommand{\openitem}[1]{\textbf{\textcolor{red!75!black}{[OPEN: #1]}}}
+\setlist[enumerate]{leftmargin=1.8em, itemsep=2pt, topsep=3pt}
+\setlist[itemize]{leftmargin=1.5em, itemsep=2pt, topsep=3pt}
+
+\title{\textbf{METHODS DRAFT: Algorithmic Calibration and Micro-Randomized Decision Engine for Just-in-Time Adaptive Interventions: Methods}}
+\author{Tien (Tyler) Le}
+\date{September 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{MSSD Definition and Decision Rules}
+
+\subsection{Mathematical Definition}
+
+Let $x_{i,t} \in \{1, 2, \dots, 7\}$ denote participant $i$'s integer Likert response to a target Ecological Momentary Assessment (EMA) item at the $t$-th completed prompt. The full-series mean square of successive differences (MSSD) is conventionally defined as:
+\begin{equation}
+\text{MSSD}_i = \frac{1}{n_i - 1} \sum_{t=2}^{n_i} (x_{i,t} - x_{i,t-1})^2
+\end{equation}
+In real-time deployment, evaluating a full-series metric is contraindicated because it averages over historical baseline shifts rather than isolating acute proximal swings. The decision engine evaluates a rolling, recency-weighted formulation over a trailing window of $w = 3$ successive differences:
+\begin{equation}
+\widehat{\text{MSSD}}_{i,t} = \frac{1}{\min(w,\, t - 1)} \sum_{k=\max(2,\, t - w + 1)}^{t} (x_{i,k} - x_{i,k-1})^2
+\end{equation}
+with $w = 3$ and a minimum evaluation period of 1. At $t = 2$ and $t = 3$, the engine computes the metric over available differences rather than remaining undefined. Offline analytical audits must reference the runtime telemetry logged in \texttt{JITAILog.observed\_mssd} rather than recomputing a global retrospective MSSD, as the rolling and static formulations yield systematically distinct quantities.
+
+\subsection{Production Decision Pipeline}
+
+At each completed EMA prompt, the decision engine executes a sequential gating cascade:
+\begin{enumerate}
+    \item \textbf{Burn-in Initialization} 
+    
+    The initial observation ($t = 1$, where t is the number of days) provides no prior difference. Prompts $t = 2, 3, 4$ yield rolling MSSD estimates but do not evaluate trigger eligibility, as the within-person threshold requires a minimum of three historical MSSD observations. Randomized decisions become active strictly from prompt $t \ge 5$ or week 2 onward.
+    
+    \item \textbf{Expanding Within-Person Threshold0} 
+    
+    The intervention trigger cutoff is calibrated to the 80th percentile of participant $i$'s expanding $\widehat{\text{MSSD}}$ vector:
+    \begin{equation}
+    \Theta_{i,t} = \text{Quantile}_{0.80}\left(\{\widehat{\text{MSSD}}_{i,1}, \dots, \widehat{\text{MSSD}}_{i,t-1}\}\right)
+    \end{equation}
+    Lagging the evaluation window by one prompt ensures strictly out-of-sample benchmarking, preventing the current affective deviation from inflating its own threshold.
+    
+    \item \textbf{Eligibility Gate} 
+    
+    An intervention decision point is flagged as eligible if and only if:
+    \begin{equation}
+    \widehat{\text{MSSD}}_{i,t} > \Theta_{i,t}
+    \end{equation}
+    Interventions are triggered by state volatility relative to an idiographic baseline rather than absolute distress levels.
+    
+    \item \textbf{Daily Dosage Cap} 
+    
+    A strict ceiling limits deliveries to no more than 4 prompts per calendar day. Decision points evaluated after reaching the daily cap are logged as blocked.
+    
+    \item \textbf{Refractory Cooldown} 
+    
+    A minimum interval of *30 minutes* must elapse following a delivered prompt. Subsequent threshold exceedances within this refractory window are suppressed to prevent notification habituation.
+    
+    \item \textbf{Micro-Randomization} 
+    
+    Conditioned on clearing the eligibility, daily cap, and cooldown gates, intervention delivery is randomized via a Bernoulli trial with fixed probability $p = 0.50$:
+    \begin{equation}
+    A_{i,t} \sim \text{Bernoulli}(0.50)
+    \end{equation}
+    Delivery randomization uncouples causal intervention effects from the underlying deterministic gating mechanism.
+\end{enumerate}
+
+\section{Synthetic Data Generation}
+
+\subsection{Generative Process}
+
+Synthetic cohorts are simulated using a stationary, discrete-time, first-order autoregressive ($\text{AR}(1)$) Gaussian process parameterized independently per participant $i$ and construct $c$:
+\begin{align}
+z_{i,1} &\sim \mathcal{N}(0,\, \sigma_i^2) \\
+z_{i,t} &= \rho_i z_{i,t-1} + \varepsilon_{i,t}, \quad \varepsilon_{i,t} \sim \mathcal{N}\left(0,\, \sigma_i^2(1 - \rho_i^2)\right) \\
+x_{i,t} &= \text{clip}\left(\left\lfloor \mu_i + z_{i,t} \right\rceil,\, 1,\, 7\right)
+\end{align}
+Scaling the innovation variance by $\sigma_i^2(1 - \rho_i^2)$ preserves a constant marginal variance $\text{Var}(z_{i,t}) = \sigma_i^2$ for all $t$. The latent process reverts to set point $\mu_i$ without autonomous deterministic drift. The synthetic EMA, $x_i, t$ is clipped to a Likert scale of 1-7 to simulate an EMA response.
+
+\subsection{Idiographic Parameter Sampling}
+
+Participant-level parameters are sampled from continuous uniform distributions across the production affective items (Energy = \texttt{B1}, Stress = \texttt{B2}):
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Construct} & \textbf{Baseline Set Point ($\mu$)} & \textbf{Stationary Volatility ($\sigma$)} & \textbf{Autoregressive Inertia ($\rho$)} \\
+\midrule
+Energy (\texttt{B1}) & $\mathcal{U}(3.0,\, 5.0)$ & $\mathcal{U}(0.4,\, 1.4)$ & $\mathcal{U}(0.2,\, 0.8)$ \\
+Stress (\texttt{B2}) & $\mathcal{U}(2.0,\, 4.0)$ & $\mathcal{U}(0.4,\, 1.2)$ & $\mathcal{U}(0.2,\, 0.8)$ \\
+\bottomrule
+\end{tabular}
+\caption{Continuous parameter bounds for synthetic participant generation.}
+\end{table}
+
+\subsection{Clustered Missing Data Architecture}
+
+Missingness is generated via a two-state Markov chain to reflect bursty, dependent non-response patterns rather than an independent Missing Completely at Random (MCAR) mechanism. To put simply, EMA response missingness has a 'sticky' factor. Consecutive uncompleted assessments form clustered sequences with an empirical mean gap length of 3 prompts ($\lambda_{\text{gap}} = 3$) calibrated to a target global response rate of $R = 0.80$.
+
+\subsection{Scenario Taxonomy}
+
+The core simulation pipeline utilizes continuous parameter sampling rather than discrete participant clusters. Controlled scenarios enter through two downstream protocols:
+\begin{itemize}
+    \item \textbf{Analytical Volatility Stratification} 
+    
+    For descriptive benchmarking, participants are partitioned into Stable ($E[\text{MSSD}] \le 0.4$), Moderate ($0.4 < E[\text{MSSD}] < 1.6$), and Volatile ($E[\text{MSSD}] \ge 1.6$) strata using the analytical expectation:
+    \begin{equation}
+    E[\text{MSSD}_i] = 2\sigma_i^2(1 - \rho_i)
+    \end{equation}
+    \item \textbf{Dynamic Trajectory Scenarios0} 
+    
+    In misspecification testing, stationary standard deviations $\sigma$ are replaced by dynamic variance schedules $\sigma_t$ to evaluate non-stationary regime adaptation.
+\end{itemize}
+
+\subsection{Intraday Delivery Architecture}
+
+The canonical study duration yields $N = D \times M$ scheduled prompts, where $D = 35$ days and $M = 5$ prompts per day. Prompts are distributed across a uniform intraday grid (09:00, 11:00, 13:00, 15:00, 17:00). Each notification carries a 60-minute response expiration window; completed prompts follow an empirical latency distribution with 88\% submitted within 3--55 minutes and 12\% submitted in a delayed window (61--180 minutes).
+
+\subsection{Analytical Ground Truth and Schema Specification}
+
+Ground truth for statistical validation is established analytically via the continuous stationary expectation of the underlying $\text{AR}(1)$ generative process:
+\begin{equation}
+E[\text{MSSD}_i] = 2\sigma_i^2(1 - \rho_i)
+\end{equation}
+Algorithmic parameter and threshold recovery are evaluated directly against this latent closed-form benchmark, eliminating reliance on subjective event thresholds or heuristic crisis labels.
+
+To ensure computational reproducibility and seamless translation to production infrastructure, the simulation architecture cross-references two complementary schema specifications:
+\begin{enumerate}
+    \item \textbf{Conceptual Data Dictionary (\texttt{syntheticData/SCHEMA.md})} 
+    
+    Defines the mathematical data-generating mechanisms, synthetic epoch timestamps, latent variable representations (e.g., true parameters $\sigma_i$ and $\rho_i$), and analytical metric derivations.
+    \item \textbf{Production ORM Schema (\texttt{analysis-resources/production\_schema.md})} 
+    
+    Formalizes the runtime database constraints, relational foreign-key topologies, and field validators implemented in the production backend (such as strict $1$--$7$ integer Likert bounds on \texttt{app\_emaitemresponse.value\_numeric} enforced via \texttt{MinValueValidator(1)} and \texttt{MaxValueValidator(7)}).
+\end{enumerate}
+Evaluating simulated trajectories across this dual-schema framework ensures that synthetic validation sets strictly adhere to production persistence constraints while preserving complete visibility into latent affective dynamics.
+
+
+
+\section{Simulation System Parameters}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lp{4.2cm}p{7.8cm}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Baseline Specification} & \textbf{Methodological Justification} \\
+\midrule
+Daily EMA Opportunities & 5 prompts/day & Fixed conservative evaluation lower-bound for daily check-ins. \\
+Daily Prompt Ceiling & 4 prompts/day & Hard safety cap to bound participant burden. \\
+Threshold Quantile & 80th percentile, expanding & Idiographic calibration ensuring out-of-sample thresholding. \\
+Intervention Window & 30 minutes & Substantial time to complete the prompt, reducing burden and eliminating pressure for immediate responses.\\
+Refractory Cooldown & 60 minutes & Prevents cluster firing during persistent affective episodes. Intervention cooldown.\\
+MSSD Rolling Window ($w$) & 3 observations & Rolling statistic capturing localized instability. \\
+Burn-in Period & 4 completed days & Emergent requirement ($t \ge 5$) from minimum history requirements. \\
+Micro-Randomization ($p$) & 0.50 & Balances intervention power and unconfounded counterfactual estimation. \\
+EMA Compliance Baseline & 80\% & Simulation default; distinct from the 75\% preregistered feasibility benchmark and 70\% analytical floor. \\
+Deployment Horizon & 35 days (5 weeks) & Primary trial duration (Week 1 run-in followed by 4 intervention weeks). \\
+Likert Measurement Bounds & 1 to 7 integer scale & Validator Bounds. \\
+\bottomrule
+\end{tabular}
+\caption{Canonical parameter specification for JITAI simulation experiments.}
+\end{table}
+
+\section{Threshold Calibration}
+
+The Mean Square Successive Difference within-person threshold was calibrated to the 80th percentile of each participant's expanding $\widehat{\text{MSSD}}$ vector to optimize the fundamental trade-off between statistical detection power and participant notification burden. In a micro-randomized trial (MRT) featuring up to 5 daily decision points per day and an intervention allocation probability of $p = 0.50$, trial design guidelines require bounding proximal prompt frequency to prevent notification habituation and disengagement while maintaining sufficient variance to detect causal excursion effects.
+
+To empirically calibrate this decision boundary prior to clinical deployment, we conducted a multi-parameter sensitivity simulation crossing a factorial grid of threshold percentiles ($\Theta \in [0.70, 0.90]$ in 0.05 increments) and baseline burn-in durations ($B \in \{0, 1, 2, 3, 5, 7\}$ days) across 150 simulated participants over 10 randomized replications ($N = 1{,}500$ realizations per cell) under varying compliance rates ($R \in \{0.70, 0.80, 0.90\}$). Under the default $80\%$ compliance assumption ($M = 5$ prompts/day) following a 7-day burn-in period, lower percentiles produced excessive intervention dosages of $6.47$ ($\Theta = 0.70$) and $5.43$ ($\Theta = 0.75$) eligible decision points per participant per week. Conversely, conservative thresholds yielded suppressed rates of $3.57$ ($\Theta = 0.85$) and $2.70$ ($\Theta = 0.90$) decision points per week.
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1.0\textwidth]{threshold_sensitivity_grid_by_resprate.png}
+    \caption{Simulated JITAI prompt eligibility across threshold percentiles, burn-in periods, and compliance rates.}
+    \label{fig:threshold_sensitivity_grid_by_resprate}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{threshold80_sensitivity_grid.png}
+    \caption{Intervention prompt dosage as a function of within-person MSSD threshold percentile and baseline burn-in duration ($R = 80\%$, $n = 1{,}500$).}
+    \label{fig:threshold80_sensitivity_grid}
+\end{figure}
+
+The 80th-percentile threshold ($\Theta = 0.80$) stabilized empirical dosage at $4.33$ ($\pm 0.05$) eligible decision points per week ($4.62$ at a 3-day burn-in), corresponding to an expected delivery rate of approximately $2.1$ prompts per week post-randomization. This directly satisfies the clinical trial protocol's target dosage of 2--3 delivered prompts per day during high-volatility episodes while respecting the pre-registered upper boundary of 4 prompts per day. Furthermore, factorial sweeps across compliance tiers demonstrated that the response rate acts as an orthogonal scalar: shifting compliance between $70\%$ and $90\%$ modulated the global baseline volume without distorting the underlying relative ranking across percentile contours, establishing $\Theta = 0.80$ as the robust operating cutoff.
+
+\section{Parameter and Metric Recovery}
+
+\subsection{MSSD Tracking Fidelity}
+
+Evaluating an unconstrained cohort ($n = 89$, response rate $R = 0.80$) demonstrates that rolling empirical estimates reliably track latent stationary variance ($r = 0.823$, exceeding the pre-registered construct validity threshold of $r \ge 0.70$). Mean empirical MSSD was $0.953 \pm 0.312$ compared to a latent expectation of $1.155 \pm 0.384$. Across the stationary cohort, $2.6\%$ of all evaluable prompts triggered an eligible intervention point.
+
+\subsection{Autoregressive Parameter Sensitivity}
+
+Latent parameter recovery sweeps demonstrate that recovering innovation variance ($\hat{\sigma}$) is robust across missingness regimes. Conversely, autoregressive persistence ($\hat{\rho}$) degrades non-linearly when EMA completion drops below approximately $70\%$. This establishes $70\%$ as the mathematical breakdown floor for temporal recovery. The trial's $75\%$ pre-registered compliance benchmark incorporates a necessary margin of safety above this floor.
+
+\section{Sensitivity and Robustness Analyses}
+
+\openitem{Sample structure. Need to verify.}
+
+\subsection{Compliance and Burn-in Sensitivity}
+
+A full factorial simulation crossing response rates ($70\% \le R \le 90\%$) with burn-in lengths ($0 \le B \le 7$ days) across 1,500 participant-weeks per cell confirmed that compliance rate and threshold quantile function as orthogonal operational parameters: compliance governs parameter estimation variance, while quantile thresholding directly regulates prompt dosage.
+
+\subsection{Stationarity Misspecification Analysis}
+
+The production engine assumes individual affective volatility is stationary across the 35-day horizon. To evaluate resilience against regime shifts, we evaluated four latent volatility schedules $\sigma_t$ introduced at Day 14[cite: 2]:
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Scenario} & \textbf{Mathematical Formulation} & \textbf{Clinical Phenomenon Represented} \\
+\midrule
+Stationary & $\sigma_t = \sigma_0$ & Unperturbed baseline (control)[cite: 2] \\
+Shift Up & $\sigma_t = 2.0\,\sigma_0, \quad t \ge \text{Day } 14$ & Acute exogenous stressor onset[cite: 2] \\
+Shift Down & $\sigma_t = 0.5\,\sigma_0, \quad t \ge \text{Day } 14$ & Therapeutic recovery or habituation[cite: 2] \\
+Drifting & $\log \sigma_t = \mu_\sigma + 0.97(\log \sigma_{t-1} - \mu_\sigma) + \eta_t$ & Stochastic non-stationary variance drift[cite: 2] \\
+\bottomrule
+\end{tabular}
+\caption{Latent volatility trajectories evaluated in misspecification experiments[cite: 2].}
+\end{table}
+
+Performance was benchmarked across 1,500 paired participant realizations (150 participants $\times$ 10 seeds) using common random numbers, comparing the production expanding threshold against a diagnostic 7-day rolling window ($w_{\text{thresh}} = 35$ prompts)[cite: 2]:
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}lcccccccc@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{Stationary}} & \multicolumn{2}{c}{\textbf{Shift Up}} & \multicolumn{2}{c}{\textbf{Shift Down}} & \multicolumn{2}{c}{\textbf{Drift}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+\textbf{Metric} & \textbf{Exp.} & \textbf{Roll.} & \textbf{Exp.} & \textbf{Roll.} & \textbf{Exp.} & \textbf{Roll.} & \textbf{Exp.} & \textbf{Roll.} \\
+\midrule
+True Positive Rate (TPR)[cite: 2] & 0.51 & 0.52 & 0.70 & 0.61 & 0.26 & 0.37 & 0.46 & 0.48 \\
+False Positive Rate (FPR)[cite: 2] & 0.08 & 0.10 & 0.19 & 0.13 & 0.06 & 0.10 & 0.11 & 0.12 \\
+Precision[cite: 2] & 0.61 & 0.57 & 0.48 & 0.53 & 0.54 & 0.49 & 0.52 & 0.50 \\
+Prompts/Week (Pre-Shift)[cite: 2] & 4.59 & 4.69 & 4.59 & 4.69 & 4.59 & 4.69 & 4.82 & 4.91 \\
+Prompts/Week (Post-Shift)[cite: 2] & 4.08 & 4.58 & 9.21 & 6.54 & 1.02 & 3.25 & 4.42 & 4.85 \\
+Tracking Ratio (Post-Shift)[cite: 2] & 1.00 & 1.00 & 0.62 & 0.87 & 1.71 & 1.00 & 1.00 & 1.00 \\
+Recalibration Latency (Days)[cite: 2] & 0 & 0 & $\infty$ & 5 & $\infty$ & 6 & 0 & 0 \\
+\bottomrule
+\end{tabular}
+\caption{Performance metrics under stationarity misspecification for expanding vs. rolling threshold rules[cite: 2].}
+\end{table}
+
+Under an expanding window, the decision engine fails to adapt following discrete variance shifts[cite: 2]. When volatility drops (\textit{Shift Down}), historical data hold the threshold artificially high, causing prompt delivery to collapse to 1.0 prompt/week and reducing true-positive detection to 0.26 without triggering error alerts[cite: 2]. Conversely, when volatility surges (\textit{Shift Up}), prompt dosage increases to 9.2 prompts/week while precision drops to 0.48, generating notification fatigue[cite: 2]. 
+
+The diagnostic 7-day rolling threshold successfully adapts within 5--6 days post-shift, restoring delivery rates at a minor precision loss under stationary conditions (0.61 vs.\ 0.57)[cite: 2]. These findings demonstrate that expanding within-person baselines require automated divergence monitoring to detect regime shifts during clinical field trials[cite: 2].
+
+\end{document}

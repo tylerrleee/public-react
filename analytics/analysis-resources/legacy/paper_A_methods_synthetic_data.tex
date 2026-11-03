@@ -1,0 +1,307 @@
+\documentclass[11pt,letterpaper]{article}
+
+% --- Packages ---
+\usepackage[top=1in,bottom=1in,left=1in,right=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+
+% --- Hyperref Setup ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!70!black,
+    urlcolor=blue!70!black
+}
+
+% --- List Formatting ---
+\setlist[enumerate]{leftmargin=1.8em, itemsep=3pt, topsep=4pt}
+\setlist[itemize]{leftmargin=1.5em, itemsep=2pt, topsep=3pt}
+
+\title{\textbf{Method: Synthetic Data Generation and Algorithmic Robustness}}
+\author{Tien (Tyler) Le}
+\date{September 11, 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Synthetic Data Generation}
+
+\subsection{Generative Process}
+
+To evaluate the decision engine against known affective dynamics prior to clinical deployment, synthetic participant trajectories are generated as discrete-time, stationary first-order autoregressive ($\text{AR}(1)$) Gaussian processes. 
+
+For each participant $i$ and affective construct (energy, stress), the latent emotional state $z_{i,t}$ across discrete prompt index $t \in \{1, 2, \dots, n\}$ (where $n = D \times M$ for $D$ study days and $M$ daily prompts) is generated according to:
+\begin{align}
+z_{i,1} &\sim \mathcal{N}(0,\, \sigma_i^2) \\
+z_{i,t} &= \rho_i z_{i,t-1} + \varepsilon_{i,t}, \quad \varepsilon_{i,t} \sim \mathcal{N}\left(0,\, \sigma_i^2 (1 - \rho_i^2)\right)
+\end{align}
+where $\sigma_i$ denotes the participant's stationary standard deviation (process volatility, representing the spread of affective fluctuations) and $\rho_i \in (-1, 1)$ represents the lag-1 autocorrelation (affective inertia or temporal persistence between successive states). Scaling the innovation variance by $\sigma_i^2(1 - \rho_i^2)$ ensures that the marginal process variance remains constant at $\text{Var}(z_{i,t}) = \sigma_i^2$ across all time steps $t$, preventing variance deflation or non-stationary random-walk dispersion. 
+
+The continuous latent trajectory is translated into an observed self-report score representing an Ecological Momentary Assessment (EMA) check-in by adding the participant's baseline set point $\mu_i$, rounding to the nearest integer, and clamping to the bounded 7-point Likert scale enforced by production database validators (\texttt{MinValueValidator(1)}, \texttt{MaxValueValidator(7)}):
+\begin{equation}
+x_{i,t} = \text{clip}\left(\left\lfloor \mu_i + z_{i,t} \right\rceil,\, 1,\, 7\right)
+\end{equation}
+
+\subsection{Participant Parameter Sampling}
+
+The generator models individual differences by independently sampling parameters $(\mu_i, \sigma_i, \rho_i)$ from continuous uniform distributions for each participant. In the production schema, these represent the primary trigger items \texttt{B1} (energy) and \texttt{B2} (stress):
+\begin{itemize}
+    \item \textbf{Energy (\texttt{B1}):} $\mu_i \sim \mathcal{U}(3.0,\, 5.0)$, $\sigma_i \sim \mathcal{U}(0.4,\, 1.4)$, $\rho_i \sim \mathcal{U}(0.2,\, 0.8)$.
+    \item \textbf{Stress (\texttt{B2}):} $\mu_i \sim \mathcal{U}(2.0,\, 4.0)$, $\sigma_i \sim \mathcal{U}(0.4,\, 1.2)$, $\rho_i \sim \mathcal{U}(0.2,\, 0.8)$.
+\end{itemize}
+Baseline set points $\mu_i$ govern average item endorsement, stationary volatilities $\sigma_i$ control individual spread, and autoregressive coefficients $\rho_i$ dictate temporal persistence between successive check-ins.
+
+\subsection{Clustered Missing Data Mechanism}
+
+Missing data are modeled using a two-state Markov chain rather than an independent Missing Completely at Random (MCAR) assumption, reflecting realistic empirical non-response where missingness is bursty and dependent (e.g., periods of sleep, focus, or device non-wear). This formulation captures the behavioral ``stickiness'' of non-compliance across successive EMA check-ins.
+
+Let $M_{i,t} \in \{0, 1\}$ denote the missingness indicator ($1 = \text{missing}$, $0 = \text{observed}$). Given a global non-response rate $m = 1 - R$ (where $R$ is the target compliance rate, default $R = 0.80$) and an average consecutive gap length $\lambda_{\text{gap}} \ge 1$ (default $\lambda_{\text{gap}} = 3$ prompts), the transition probabilities between consecutive prompts are defined by:
+\begin{align}
+\beta &= P(M_{i,t} = 0 \mid M_{i,t-1} = 1) = \frac{1}{\lambda_{\text{gap}}} \\
+\alpha &= P(M_{i,t} = 1 \mid M_{i,t-1} = 0) = \frac{m \beta}{1 - m} = \frac{(1 - R)}{\lambda_{\text{gap}} R}
+\end{align}
+The initial state is sampled from the stationary distribution via $P(M_{i,1} = 1) = m$. At each time step $t$, if $M_{i,t} = 1$, the observed response is masked as uncompleted:
+\begin{equation}
+\tilde{x}_{i,t} = \begin{cases} 
+\text{NaN}, & \text{if } M_{i,t} = 1 \\ 
+x_{i,t}, & \text{if } M_{i,t} = 0 
+\end{cases}
+\end{equation}
+This formulation preserves the long-run expected response rate $R$ while creating autocorrelated non-response bursts.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{response_raster.png}
+        \caption{Comparison of autocorrelated (``sticky'') Markov missingness against an independent MCAR baseline raster ($R = 0.80$, $N = 40$ participants). Black cells denote uncompleted prompts.}
+        \label{fig:response_raster}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{missing_rate_histogram.png}
+        \caption{Distribution of per-user missing rates across the synthetic cohort ($n = 100$ users). The cohort mean missing rate ($0.195$) tracks the nominal target ($1 - R = 0.20$).}
+        \label{fig:missing_rate_histogram}
+    \end{subfigure}
+    \caption{Synthetic EMA missing data diagnostics illustrating autocorrelated non-response patterns and cohort-level compliance fidelity.}
+    \label{fig:missing_data_diagnostics}
+\end{figure}
+
+\subsection{Intraday Notification Grid and Timestamps}
+
+Prompts are scheduled across participant waking hours on an intraday grid. For the canonical $M = 5$ prompts per day over $D = 35$ days ($N = 175$ total prompts), prompt index $t \in \{0, 1, \dots, N-1\}$ maps to calendar day $d = \lfloor t / M \rfloor$ and prompt sequence $k = t \pmod M$. Timestamps are generated by:
+\begin{equation}
+\text{Timestamp}(t) = \text{Start Date} + d \times 24\text{ hours} + 9\text{ hours} + k \times \left(\frac{12\text{ hours}}{M - 1}\right)
+\end{equation}
+For $M = 5$, this anchors deliveries at 09:00, 12:00, 15:00, 18:00, and 21:00 daily. Explicit temporal spacing ensures that prompts remain separated by 3 hours, preventing the engine's 60-minute refractory cooldown rule from artificially suppressing consecutive evaluations.
+
+\subsection{Continuous Telemetry and Physiological Coupling}
+
+In addition to self-reported affective ratings, the simulation framework generates physiological telemetry modeled after commercial consumer smartwatches (Garmin Venu 3).
+
+\begin{enumerate}
+    \item \textbf{Continuous Minute-Level Heart Rate (HR):} Baseline heart rate is sampled per user from a resting range ($\text{resting HR} \sim \mathcal{U}(60, 100)\text{ bpm}$) and modulated by a 24-hour circadian rhythm peaking at approximately 16:00, additive Gaussian noise ($\sigma_{\text{noise}} = 2.0\text{ bpm}$), and stochastic physical activity bouts elevating heart rate by $15$--$40\text{ bpm}$ for $20$--$60$ minutes:
+    \begin{equation}
+    \text{HR}(t) = \text{clip}\left(\text{resting HR} + \text{circadian}(t) + \text{noise}(t) + \text{activity}(t),\, 40,\, 200\right)
+    \end{equation}
+    
+    \item \textbf{Continuous All-Day Stress:} Garmin stress scores ($0$--$100$) are computed minute-by-minute directly from the continuous heart rate trace by normalizing heart rate over an exertion window ($[55, 130]\text{ bpm}$) with additive measurement noise ($\sigma = 4.0$), coupling physical arousal spikes to daytime stress elevations.
+    
+    \item \textbf{Continuous Beat-to-Beat HRV and Overnight Status:} Per-minute Root Mean Square of Successive Differences (RMSSD) is derived from simulated inter-beat (RR) intervals, where parasympathetic tone decreases as heart rate rises. HRV is treated as an individualized physiological measure whose interpretation is based primarily on within-person trends and a personal baseline rather than on a universal population threshold \cite{oura_average_hrv}. Separately, an overnight average RMSSD is evaluated during sleep and referenced against an expanding 7-day baseline to classify physiological recovery into clinical categories (\textit{Balanced}, \textit{Low}, or \textit{Unbalanced}).
+\end{enumerate}
+
+\subsection{Scenario Taxonomy}
+
+The primary cohort generator samples continuously across parameter space without arbitrary discrete subgroups. Structured scenarios enter the analysis via two specific downstream protocols:
+\begin{enumerate}
+    \item \textbf{Analytical Volatility Stratification} 
+    
+    For descriptive benchmarking, cohorts are segmented into three latent volatility tiers based on their closed-form expected instability:
+    \begin{equation}
+    \text{Group} = \begin{cases} 
+    \text{Stable}, & \text{if } E[\text{MSSD}_i] \le 0.4 \\ 
+    \text{Moderate}, & \text{if } 0.4 < E[\text{MSSD}_i] < 1.6 \\ 
+    \text{Volatile}, & \text{if } E[\text{MSSD}_i] \ge 1.6 
+    \end{cases}
+    \end{equation}
+    \item \textbf{Dynamic Trajectory Scenarios (Misspecification Testing)} 
+    
+    To assess robustness when the engine's stationarity assumption is violated, the fixed scalar $\sigma_i$ is replaced at mid-study ($t \ge \text{Day } 14$) by dynamic variance paths $\sigma_{i,t}$, detailed in Section~\ref{sec:misspecification}.
+\end{enumerate}
+
+\subsection{Analytical Ground Truth}
+
+Ground truth in this simulator is defined continuously and analytically. It does not rely on subjective crisis annotations or heuristic threshold events. For each participant $i$, the latent benchmark is the stationary expectation of squared successive differences derived from their underlying $\text{AR}(1)$ parameters:
+\begin{equation}
+E[\text{MSSD}_i] = 2\sigma_i^2(1 - \rho_i)
+\end{equation}
+For dynamic trajectories, the instantaneous expected volatility at prompt $t$ is:
+\begin{equation}
+E[\text{MSSD}_{i,t}] = 2\sigma_{i,t}^2(1 - \rho_i)
+\end{equation}
+
+\section{Robustness to Stationarity Misspecification}
+\label{sec:misspecification}
+
+\subsection{The Stationarity Assumption Under Test}
+
+The production decision engine determines each participant's trigger threshold $\Theta_{i,t}$ as an expanding within-person 80th percentile of rolling $\widehat{\text{MSSD}}$ estimates (from Methods: MSSD Definition), lagged by one observation. Because the window accumulates indefinitely without temporal weighting, every prior observation carries equal influence throughout the 35-day deployment. This design relies on a strict foundational premise: individual affective volatility is a stationary, time-invariant personal trait calibrated during the Week 1 non-interventional run-in.
+
+If this assumption fails--such as when an individual encounters an acute exogenous stressor, undergoes clinical symptom remission, or develops intervention habituation--the expanding threshold remains pinned to a superseded regime. Simply, the threshold is outdated and is affected by extremality of an event. To evaluate the operational consequences of this misspecification, we tested the production decision engine against dynamic non-stationary data streams where volatility shifts mid-study.
+
+\subsection{Non-Stationary Scenario Architecture}
+
+Simulation cohorts ($N = 150$ participants across 10 independent replications, yielding 1,500 participant trajectories) were modeled over 35 days ($M = 5$ prompts/day, $R = 0.80$ compliance). At Day 14 ($t = 70$), four latent innovation schedules $\sigma_{i,t}$ were introduced:
+\begin{itemize}
+    \item \textbf{Stationary (Control)} 
+    
+    Unperturbed volatility ($\sigma_{i,t} = \sigma_{i,0}$), serving as the experimental baseline.
+    
+    \item \textbf{Shift Up (Stressor Onset)} 
+    
+    Volatility doubles ($\sigma_{i,t} = 2.0\,\sigma_{i,0}$), producing a fourfold surge in expected latent instability ($E[\text{MSSD}] \times 4$).
+    
+    \item \textbf{Shift Down (Recovery/Habituation)} 
+    
+    Volatility halves ($\sigma_{i,t} = 0.5\,\sigma_{i,0}$), quartering expected latent instability ($E[\text{MSSD}] \times 0.25$).
+    
+    \item \textbf{Stochastic Drift} 
+    
+    Volatility follows a slow continuous log-AR(1) process with high persistence:
+    
+    \begin{equation}
+    \log \sigma_{i,t} = \log \sigma_{i,0} + 0.97 (\log \sigma_{i,t-1} - \log \sigma_{i,0}) + 0.10\, \eta_t, \quad \eta_t \sim \mathcal{N}(0, 1)
+    \end{equation}
+\end{itemize}
+Common random numbers were preserved across scenarios so that each participant's innovation sequence and pre-shift history ($t < \text{Day } 14$) remained strictly identical, isolating regime shift dynamics from sample variance.
+
+\subsection{Algorithmic Policy Arms}
+
+Each scenario was evaluated simultaneously across four distinct thresholding policies:
+\begin{enumerate}
+    \item \textbf{Production Expanding Window} 
+    
+    Evaluates the production engine using all historical observations.
+    
+    \item \textbf{Diagnostic Rolling 7-Day Window} 
+    
+    Computes the 80th percentile across a trailing 35-prompt window (7 days at 5 prompts/day), shedding historical data.
+    
+    \item \textbf{Exponential Moving Quantile (EMQ) with Fixed Anchor} 
+    
+    Blends the Week 1 run-in baseline with an exponentially weighted trailing history ($w_{\text{anchor}} = 0.35$, half-life $\tau = 7$ days).
+    
+    \item \textbf{EMQ with Decaying Anchor} 
+    
+    Initial run-in anchor decays exponentially with a 14-day half-life ($\tau_{\text{anchor}} = 14$ days), transitioning to fully adaptive weighting.
+    
+\end{enumerate}
+
+\subsection{Oracle Calibration and Discrete Likert Quantization}
+
+To evaluate whether threshold exceedances capture true momentary volatility, each prompt was scored against two benchmarks:
+\begin{itemize}
+    \item \textbf{Standardized Latent Instability} 
+    
+    The ratio of unrounded, gap-free latent instability to instantaneous regime variance:
+    \begin{equation}
+    \text{Instability}^*_{i,t} = \frac{\frac{1}{w}\sum_{k=t-w+1}^t (z_{i,k} - z_{i,k-1})^2}{2\sigma_{i,t}^2(1 - \rho_i)}
+    \end{equation}
+    Because its distribution depends solely on autocorrelation $\rho_i$, an idiographic 80th percentile of this ratio defines true high volatility (a strict 20\% positive rate across all scenarios by construction).
+    \item \textbf{Empirical Oracle Tracking Ratio} 
+    
+    On a bounded 1--7 integer Likert scale, small fluctuations round to zero, creating an empirical quantization floor at $\widehat{\text{MSSD}} \approx 0.33$ for calm states ($\sigma < 0.40$). A linear scaling oracle fails because it interprets this discretization floor as tracking error. We mapped true expected MSSD to the converged threshold under stationary production conditions to define an empirical oracle $\Theta^*(m_{i,t})$. The tracking ratio,
+    \begin{equation}
+    \text{TR}_{i,t} = \frac{\Theta_{i,t}}{\Theta^*(m_{i,t})}
+    \end{equation}
+    measures pure regime adaptation failure ($\text{TR} = 1.00$ denotes perfect calibration).
+\end{itemize}
+
+\subsection{Empirical Findings and Failure Modes}
+
+Table~\ref{tab:misspecification_results} reports classification fidelity, dosage, and adaptation latency across scenarios and arms. Figures~\ref{fig:dosage_over_time} and~\ref{fig:detection_performance} illustrate longitudinal dosage trajectories and signal-detection metrics.
+
+\begin{table}[htbp]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llcccccccccc@{}}
+\toprule
+\textbf{Scenario} & \textbf{Arm} & \textbf{TPR} & \textbf{FPR} & \textbf{Prec.} & \textbf{PPW}$_{\text{pre}}$ & \textbf{PPW}$_{\text{post}}$ & \textbf{TR}$_{\text{post}}$ & \textbf{TR}$_{\text{final}}$ & \textbf{Latency} & \textbf{Volat.} & \textbf{Ties} \\
+\midrule
+Stationary & Expanding (Prod.) & 0.511 & 0.082 & 0.611 & 4.59 & 4.08 & 1.00 & 1.00 & 0 d & 0.010 & 0.116 \\
+           & Rolling 7-day     & 0.516 & 0.098 & 0.571 & 4.69 & 4.58 & 1.00 & 1.00 & 0 d & 0.030 & 0.113 \\
+           & EMQ (Fixed)       & 0.555 & 0.103 & 0.575 & 4.92 & 4.93 & 1.00 & 1.00 & 0 d & 0.014 & 0.055 \\
+           & EMQ (Decaying)    & 0.555 & 0.104 & 0.574 & 4.92 & 4.95 & 1.00 & 1.00 & 0 d & 0.017 & 0.055 \\
+\addlinespace
+Shift Up   & Expanding (Prod.) & 0.697 & 0.192 & 0.478 & 4.59 & 9.21 & 0.62 & 0.74 & $\infty$ & 0.014 & 0.097 \\
+($\sigma \times 2$) & Rolling 7-day     & 0.606 & 0.134 & 0.532 & 4.69 & 6.54 & 0.86 & 0.97 & 5 d & 0.033 & 0.078 \\
+           & EMQ (Fixed)       & 0.718 & 0.214 & 0.458 & 4.92 & 9.89 & 0.65 & 0.75 & 19 d & 0.020 & 0.037 \\
+           & EMQ (Decaying)    & 0.696 & 0.190 & 0.480 & 4.92 & 8.93 & 0.72 & 0.89 & 10 d & 0.023 & 0.037 \\
+\addlinespace
+Shift Down & Expanding (Prod.) & 0.256 & 0.056 & 0.537 & 4.59 & 1.02 & 1.71 & 1.50 & $\infty$ & 0.011 & 0.092 \\
+($\sigma \times 0.5$) & Rolling 7-day     & 0.366 & 0.096 & 0.491 & 4.69 & 3.25 & 1.00 & 1.00 & 6 d & 0.040 & 0.145 \\
+           & EMQ (Fixed)       & 0.295 & 0.069 & 0.519 & 4.92 & 1.57 & 1.72 & 1.52 & $\infty$ & 0.014 & 0.045 \\
+           & EMQ (Decaying)    & 0.313 & 0.074 & 0.518 & 4.92 & 1.87 & 1.55 & 1.20 & 17 d & 0.019 & 0.044 \\
+\addlinespace
+Drift      & Expanding (Prod.) & 0.464 & 0.110 & 0.515 & 4.82 & 4.42 & 1.00 & 1.00 & 0 d & 0.012 & 0.100 \\
+           & Rolling 7-day     & 0.476 & 0.121 & 0.497 & 4.91 & 4.85 & 1.00 & 1.00 & 0 d & 0.036 & 0.102 \\
+           & EMQ (Fixed)       & 0.501 & 0.130 & 0.492 & 5.14 & 5.17 & 1.04 & 1.07 & 0 d & 0.016 & 0.044 \\
+           & EMQ (Decaying)    & 0.499 & 0.129 & 0.494 & 5.12 & 5.13 & 1.04 & 1.05 & 0 d & 0.020 & 0.043 \\
+\bottomrule
+\end{tabular}
+\caption{Performance metrics under stationarity misspecification across 1,500 participant trajectories ($N=150$, 10 seeds). TPR, FPR, and Precision are evaluated on threshold crossing. PPW denotes eligible prompts per week (pre- vs.\ post-Day 14). TR denotes tracking ratio ($\Theta / \Theta^*$). Latency denotes days to settle within $\pm 25\%$ of oracle calibration ($\infty$ indicates failure to adapt within the 35-day study window). Volat.\ indicates standard deviation of threshold steps, and Ties denotes the fraction of evaluations landing on exact equality ($\widehat{\text{MSSD}} = \Theta$).}
+\label{tab:misspecification_results}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{dosage_over_time.png}
+    \caption{Longitudinal intervention dosage (delivered prompts per participant per day, $p = 0.50$ micro-randomization) across study days for the four threshold policies. Under the production expanding window (A), a stressor onset at Day 14 elevates delivered prompt dosage to near 0.9/day, whereas recovery produces severe intervention starvation ($<0.1$/day). The rolling 7-day window (B) rapidly readapts in 5--6 days, returning prompt delivery to nominal levels. Anchored and decaying EMQ policies (C, D) provide intermediate adaptation trajectories.}
+    \label{fig:dosage_over_time}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{detection_performance.png}
+    \caption{Signal-detection performance across stationarity misspecification scenarios: sensitivity (TPR, left), false-positive rate (middle), and precision (right). Dashed lines represent the stationary production control. When volatility drops, the expanding threshold suffers severe sensitivity collapse (TPR drops to 0.26). Under stressor onset, the expanding threshold becomes overly permissive (FPR rises to 0.19, precision falls to 0.48). Rolling and decaying EMQ policies maintain balanced classification across perturbations.}
+    \label{fig:detection_performance}
+\end{figure}
+
+\subsubsection{Asymmetric Failure Modes of the Production Engine}
+
+Under the production expanding threshold, the system exhibits severe directional asymmetry following variance shifts:
+\begin{itemize} 
+    \item \textbf{Delivery Starvation under Recovery (Shift Down)} 
+    
+    Following a reduction in volatility, historical run-in observations hold the threshold artificially high ($\text{TR}_{\text{final}} = 1.50$). Eligible prompts collapse from $4.59$ to $1.02$ prompts/week, and sensitivity drops by more than half ($\text{TPR} = 0.256$ vs.\ $0.511$). This represents an insidious clinical failure: the intervention goes silent, withholding support during genuine relative volatility spikes, with no system alerts or diagnostic error flags. The expanding window never recalibrates within the remaining 21 days of the protocol.
+    
+    \item \textbf{Notification Fatigue under Stressor Onset (Shift Up)} 
+    
+    When volatility doubles, historical data drag the threshold downward ($\text{TR}_{\text{post}} = 0.62$). Prompt eligibility surges to $9.21$ prompts/week, increasing false positives ($\text{FPR} = 0.192$) and reducing precision to $0.478$. While the daily cap of 4 prompts/day truncates extreme dosage spikes, participant burden remains near ceiling levels for weeks.
+    
+    \item \textbf{Robustness to Continuous Drift} 
+    
+    Under mean-reverting stochastic variance drift ($\phi = 0.97$), the expanding threshold demonstrates acceptable stability ($\text{TR} = 1.00$, $\text{TPR} = 0.464$, $\text{Precision} = 0.515$), confirming that slow undirected drift is well tolerated.
+\end{itemize}
+
+\subsubsection{Evaluation of Adaptive Alternative Policies}
+
+The diagnostic 7-day rolling window resolves the non-adaptation failure mode, successfully recalibrating within 5 days for Shift Up and 6 days for Shift Down ($\text{TR}_{\text{final}} = 0.968$ and $1.000$, respectively). Post-shift prompt dosage is restored to $3.25$ prompts/week in recovery and $6.54$ prompts/week under stress. 
+
+However, this responsiveness incurs an operational trade-off: restricting the baseline to 35 prompts increases threshold variance by a factor of 3 to 4 ($\text{SD} = 0.030$--$0.040$ vs.\ $0.010$--$0.014$ for expanding), leading to a minor loss of precision under stationary conditions ($0.571$ vs.\ $0.611$) and vulnerability to clusters of missing data.
+
+The decaying-anchor EMQ policy strikes an effective compromise. By weighting the Week 1 run-in and allowing the anchor to decay with a 14-day half-life, it prevents indefinite delivery starvation (recalibrating in 10 days for *Shift Up* and 17 days for *Shift Down*, ending at $\text{TR} = 1.20$) while maintaining low day-to-day threshold jitter ($\text{SD} \le 0.023$). 
+
+These findings indicate that while the production expanding window remains valid under strict stationarity, field deployments require automated run-time monitoring to detect uncharacteristic prompt-rate collapse and flag participants whose baseline dynamics have shifted.
+
+\end{document}
